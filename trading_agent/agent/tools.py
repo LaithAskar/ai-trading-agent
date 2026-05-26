@@ -160,6 +160,39 @@ def _get_run_details(args: dict) -> dict:
     }
 
 
+def _list_filings_tool(args: dict) -> dict:
+    from ..data.edgar_source import list_filings
+
+    refs = list_filings(
+        ticker=args["ticker"],
+        form=args.get("form", "10-Q"),
+        limit=int(args.get("limit", 4)),
+    )
+    return {
+        "ticker": args["ticker"].upper(),
+        "form": args.get("form", "10-Q"),
+        "count": len(refs),
+        "filings": [
+            {
+                "filing_date": r.filing_date,
+                "accession_no": r.accession_no,
+                "primary_doc_url": r.primary_doc_url,
+            }
+            for r in refs
+        ],
+    }
+
+
+def _fetch_filing_tool(args: dict) -> dict:
+    from ..data.edgar_source import filing_excerpt
+
+    return filing_excerpt(
+        ticker=args["ticker"],
+        accession_no=args["accession_no"],
+        max_chars=int(args.get("max_chars", 8000)),
+    )
+
+
 def _compare_runs(args: dict) -> dict:
     memory: Memory = args["__memory"]
     run_ids = args["run_ids"]
@@ -297,6 +330,62 @@ COMPARE_RUNS = Tool(
 )
 
 
+LIST_FILINGS = Tool(
+    name="list_filings",
+    description=(
+        "List recent SEC EDGAR filings for a ticker. Use this to find filing "
+        "accession numbers before calling fetch_filing. Default form is 10-Q "
+        "(quarterly); use '10-K' for annual or '8-K' for material events."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "Stock ticker, e.g. 'AAPL'"},
+            "form": {
+                "type": "string",
+                "description": "Filing form type: '10-Q', '10-K', '8-K', etc. Default '10-Q'.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "description": "Max filings to return (default 4).",
+            },
+        },
+        "required": ["ticker"],
+    },
+    fn=_list_filings_tool,
+)
+
+FETCH_FILING = Tool(
+    name="fetch_filing",
+    description=(
+        "Fetch text excerpt from a specific SEC filing by ticker + accession number. "
+        "Returns truncated text (default 8000 chars) plus metadata. Use the LLM's own "
+        "reasoning over the returned text to extract sentiment, risk-factor changes, "
+        "or guidance. Use list_filings first to find the accession_no."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string"},
+            "accession_no": {
+                "type": "string",
+                "description": "Filing accession number from list_filings (e.g. '0000320193-26-000013')",
+            },
+            "max_chars": {
+                "type": "integer",
+                "minimum": 500,
+                "maximum": 40000,
+                "description": "Maximum text chars to return (default 8000).",
+            },
+        },
+        "required": ["ticker", "accession_no"],
+    },
+    fn=_fetch_filing_tool,
+)
+
+
 ALL_TOOLS: list[Tool] = [
     LIST_STRATEGIES,
     READ_STRATEGY_CODE,
@@ -304,6 +393,8 @@ ALL_TOOLS: list[Tool] = [
     SEARCH_MEMORY,
     GET_RUN_DETAILS,
     COMPARE_RUNS,
+    LIST_FILINGS,
+    FETCH_FILING,
 ]
 
 

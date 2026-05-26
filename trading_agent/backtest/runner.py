@@ -17,6 +17,7 @@ from ..core.strategy import Strategy
 from ..data.yfinance_source import iter_bars, load_bars
 from .engine import BacktestEngine
 from .metrics import Metrics, compute_metrics, equity_curve_df
+from .rigor import BenchmarkResult, buy_and_hold, sharpe_significance
 
 
 @dataclass
@@ -31,6 +32,9 @@ class BacktestRun:
     slippage_bps: float
     commission_per_trade: float
     metrics: Metrics
+    benchmark: BenchmarkResult | None
+    sharpe_t_stat: float
+    sharpe_p_value: float
     artifact_dir: Path
 
 
@@ -73,13 +77,20 @@ def run_backtest(
     params = params or {}
     strat = load_strategy(strategy_name, params)
     df = load_bars(symbol, start, end)
+    bars = list(iter_bars(symbol, df))
     engine = BacktestEngine(
         starting_cash=starting_cash,
         slippage_bps=slippage_bps,
         commission_per_trade=commission_per_trade,
     )
-    result = engine.run(strat, symbol, iter_bars(symbol, df))
+    result = engine.run(strat, symbol, iter(bars))
     metrics = compute_metrics(result.portfolio)
+
+    benchmark = buy_and_hold(bars, starting_cash)
+
+    eq_df = equity_curve_df(result.portfolio)
+    daily_returns = eq_df["equity"].pct_change().dropna().tolist() if not eq_df.empty else []
+    t_stat, p_value = sharpe_significance(daily_returns)
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_dir = RESULTS_DIR / f"{strat.name}_{symbol}_{run_id}"
@@ -87,7 +98,7 @@ def run_backtest(
     if write_artifacts:
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        eq = equity_curve_df(result.portfolio)
+        eq = eq_df
         eq.to_csv(run_dir / "equity_curve.csv")
 
         trades = pd.DataFrame(
@@ -115,6 +126,14 @@ def run_backtest(
             "slippage_bps": slippage_bps,
             "commission_per_trade": commission_per_trade,
             "metrics": dict(metrics.as_table()),
+            "benchmark_buy_hold": {
+                "total_return_pct": benchmark.total_return_pct,
+                "cagr_pct": benchmark.cagr_pct,
+                "sharpe": benchmark.sharpe,
+                "max_drawdown_pct": benchmark.max_drawdown_pct,
+            },
+            "sharpe_t_stat": t_stat,
+            "sharpe_p_value": p_value,
         }
         (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
 
@@ -139,5 +158,8 @@ def run_backtest(
         slippage_bps=slippage_bps,
         commission_per_trade=commission_per_trade,
         metrics=metrics,
+        benchmark=benchmark,
+        sharpe_t_stat=t_stat,
+        sharpe_p_value=p_value,
         artifact_dir=run_dir,
     )

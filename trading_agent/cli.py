@@ -64,11 +64,106 @@ def backtest(
 
     table = Table(title=f"{run.strategy} on {run.symbol}")
     table.add_column("Metric")
-    table.add_column("Value", justify="right")
-    for k, v in run.metrics.as_table():
-        table.add_row(k, v)
+    table.add_column("Strategy", justify="right")
+    table.add_column("Buy & Hold", justify="right")
+    bench = run.benchmark
+    rows = [
+        ("Total return",        f"{run.metrics.total_return_pct:.2f}%",  f"{bench.total_return_pct:.2f}%"),
+        ("CAGR",                f"{run.metrics.cagr_pct:.2f}%",          f"{bench.cagr_pct:.2f}%"),
+        ("Sharpe (annualized)", f"{run.metrics.sharpe:.2f}",             f"{bench.sharpe:.2f}"),
+        ("Max drawdown",        f"{run.metrics.max_drawdown_pct:.2f}%",  f"{bench.max_drawdown_pct:.2f}%"),
+        ("Ending equity",       f"${run.metrics.ending_equity:,.2f}",    f"${bench.end_equity:,.2f}"),
+        ("Fills",               str(run.metrics.num_fills),              "1"),
+        ("Round trips",         str(run.metrics.num_round_trips),        "0"),
+        ("Win rate",            f"{run.metrics.win_rate_pct:.2f}%",      "—"),
+    ]
+    for r in rows:
+        table.add_row(*r)
+    table.add_row("Sharpe t-stat", f"{run.sharpe_t_stat:.2f}", "")
+    table.add_row("Sharpe p-value", f"{run.sharpe_p_value:.4f}", "")
     console.print(table)
+    if run.sharpe_p_value >= 0.10:
+        console.print(
+            f"[yellow]Sharpe is not statistically distinguishable from zero "
+            f"(p={run.sharpe_p_value:.3f}). Don't over-interpret.[/yellow]"
+        )
     console.print(f"[green]Wrote[/green] {run.artifact_dir}")
+
+
+@app.command(name="walk-forward")
+def walk_forward(
+    strategy: str = typer.Option(..., help="Strategy module name"),
+    symbol: str = typer.Option(..., help="Ticker"),
+    start: str = typer.Option(..., help="Overall start date YYYY-MM-DD"),
+    end: str = typer.Option(..., help="Overall end date YYYY-MM-DD"),
+    train_years: float = typer.Option(3.0, help="Training window years"),
+    test_years: float = typer.Option(1.0, help="Test (out-of-sample) window years"),
+    stride_years: float = typer.Option(1.0, help="Years to slide the window each split"),
+    param: list[str] = typer.Option([], "--param"),  # noqa: B008
+) -> None:
+    """Walk-forward validation. Runs the strategy on rolling train/test windows.
+
+    Reports the OUT-OF-SAMPLE performance per split. Most strategies that
+    look great on a single backtest fall apart here — that's the point.
+    """
+    from .backtest.rigor import walk_forward_splits
+    from .backtest.runner import run_backtest as _rb
+
+    Config.load()
+    ensure_dirs()
+
+    params = _parse_params(param)
+    splits = walk_forward_splits(start, end, train_years, test_years, stride_years)
+    if not splits:
+        console.print(
+            f"[red]No valid splits between {start} and {end} with "
+            f"train={train_years}y, test={test_years}y[/red]"
+        )
+        raise typer.Exit(1)
+
+    table = Table(title=f"Walk-forward: {strategy} on {symbol}")
+    table.add_column("Split")
+    table.add_column("Train")
+    table.add_column("Test (OOS)")
+    table.add_column("Strat CAGR", justify="right")
+    table.add_column("B&H CAGR", justify="right")
+    table.add_column("Strat Sharpe", justify="right")
+    table.add_column("p-value", justify="right")
+
+    oos_returns = []
+    for i, split in enumerate(splits, start=1):
+        try:
+            run = _rb(
+                strategy_name=strategy,
+                symbol=symbol,
+                start=split.test_start,
+                end=split.test_end,
+                params=params,
+                write_artifacts=False,
+            )
+        except Exception as e:
+            console.print(f"[red]Split {i} failed: {e}[/red]")
+            continue
+        oos_returns.append(run.metrics.cagr_pct)
+        table.add_row(
+            f"#{i}",
+            f"{split.train_start} → {split.train_end}",
+            f"{split.test_start} → {split.test_end}",
+            f"{run.metrics.cagr_pct:.2f}%",
+            f"{run.benchmark.cagr_pct:.2f}%",
+            f"{run.metrics.sharpe:.2f}",
+            f"{run.sharpe_p_value:.3f}",
+        )
+    console.print(table)
+
+    if oos_returns:
+        import statistics
+        mean_oos = statistics.mean(oos_returns)
+        stdev_oos = statistics.stdev(oos_returns) if len(oos_returns) > 1 else 0.0
+        console.print(
+            f"[bold]Out-of-sample CAGR: mean={mean_oos:.2f}%, stdev={stdev_oos:.2f}%, "
+            f"splits={len(oos_returns)}[/bold]"
+        )
 
 
 @app.command(name="list-strategies")
