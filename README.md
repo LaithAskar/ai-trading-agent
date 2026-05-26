@@ -52,7 +52,9 @@ python -m trading_agent agent --goal "..." --model claude-opus-4-7
 
 The agent emits visible **Thought → Action → Observation** panels as it runs. Every session is logged to `data/logs/agent_runs/<session_id>.json` and indexed in `data/memory.sqlite3` so the next session can `search_memory` to find prior work.
 
-A rendered sample transcript lives at [`docs/examples/sample-session.html`](docs/examples/sample-session.html) — that one shows the agent finding two prior backtests in memory and skipping the re-runs.
+Rendered sample transcripts:
+- [`docs/examples/v6-flagship-session.html`](docs/examples/v6-flagship-session.html) — **flagship demo**. Agent compares two AAPL strategies, finds prior backtests via memory (skips redundant work), pulls Apple's current Q2 FY2026 10-Q via EDGAR, and writes a regime analysis tying the filing's buyback / R&D / services data back to which strategy's regime is likely to persist. 7 iterations, $0.0845, all 8 tools exercised.
+- [`docs/examples/sample-session.html`](docs/examples/sample-session.html) — earlier 5-tool demo from before the EDGAR + Alpaca work landed.
 
 ## Observability and safety (V3)
 
