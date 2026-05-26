@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<title>ai-trading-agent · backtest + AI research agent for stock strategies</title>
+<style>
+:root { color-scheme: light only; }
+* { box-sizing: border-box; }
+html, body {
+    background: #f5f5f7 !important;
+    color: #1d1d1f !important;
+    margin: 0;
+}
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.6;
+    padding: 0 16px 96px;
+}
+.wrap { max-width: 880px; margin: 0 auto; }
+header {
+    padding: 64px 0 32px;
+    border-bottom: 1px solid #d2d2d7;
+    margin-bottom: 40px;
+}
+h1 { font-size: 32px; margin: 0 0 12px 0; font-weight: 700; }
+h2 { font-size: 22px; margin: 48px 0 16px; font-weight: 600; }
+.tagline { color: #6e6e73; font-size: 17px; margin: 0 0 20px 0; max-width: 640px; }
+.badges {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin: 16px 0 4px;
+}
+.badge {
+    background: #ffffff;
+    border: 1px solid #d2d2d7;
+    color: #1d1d1f !important;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+}
+.badge.primary { background: #1d1d1f; color: #ffffff !important; border-color: #1d1d1f; }
+.badge.primary:hover { background: #000000; }
+.cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+}
+@media (max-width: 700px) { .cards { grid-template-columns: 1fr; } }
+.card {
+    background: #ffffff;
+    border: 1px solid #d2d2d7;
+    border-radius: 12px;
+    padding: 22px 24px;
+    text-decoration: none;
+    color: #1d1d1f !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    display: block;
+}
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+    border-color: #0a84ff;
+}
+.card .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6e6e73;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+.card h3 { font-size: 17px; margin: 0 0 6px 0; font-weight: 600; }
+.card p { font-size: 14px; color: #515154; margin: 0; }
+.card .meta {
+    font-size: 12px;
+    color: #6e6e73;
+    margin-top: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.feature-list {
+    margin: 16px 0;
+    padding: 0;
+    list-style: none;
+}
+.feature-list li {
+    padding: 6px 0;
+    border-bottom: 1px solid #ececef;
+    font-size: 15px;
+}
+.feature-list li:last-child { border-bottom: none; }
+.feature-list code {
+    background: #ececef;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.section { margin-bottom: 8px; }
+.kicker {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6e6e73;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid #d2d2d7;
+    color: #6e6e73;
+    font-size: 13px;
+}
+a { color: #0a84ff; text-decoration: none; }
+a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="kicker">A research project</p>
+  <h1>ai-trading-agent</h1>
+  <p class="tagline">
+    Backtest + AI research agent for stock strategies. Hand-written ReAct loop
+    on the Anthropic SDK — no agent frameworks. Inspired by the
+    <a href="https://nexustrade.io/learn">AI Agents from Scratch</a> curriculum.
+  </p>
+  <div class="badges">
+    <a class="badge primary" href="https://github.com/LaithAskar/ai-trading-agent">GitHub repo →</a>
+    <span class="badge">80 tests passing</span>
+    <span class="badge">10 CLI commands</span>
+    <span class="badge">8 agent tools</span>
+    <span class="badge">4 reference strategies</span>
+    <span class="badge">MIT license</span>
+  </div>
+</header>
+
+<section class="section">
+  <h2>Interactive demos</h2>
+  <p style="margin: 0 0 12px; color: #515154;">
+    Open a transcript and press <b>▶ Play</b> (or hit <b>Space</b>) to watch the
+    agent reason its way through the task one iteration at a time.
+  </p>
+  <div class="cards">
+
+    <a class="card" href="examples/v6-flagship-session.html">
+      <div class="label">Flagship</div>
+      <h3>Two-strategy comparison + SEC filing analysis</h3>
+      <p>
+        Agent compares <code>sma_cross</code> vs <code>rsi_mean_rev</code> on AAPL,
+        finds prior backtests in memory and skips redundant runs, pulls Apple's
+        Q2 FY2026 10-Q via EDGAR, and writes a regime analysis tying
+        buybacks / R&amp;D / services revenue to which strategy's regime should persist.
+      </p>
+      <p class="meta">7 iterations · $0.0845 · all 8 tools exercised</p>
+    </a>
+
+    <a class="card" href="examples/sample-session.html">
+      <div class="label">Earlier demo</div>
+      <h3>Memory in action</h3>
+      <p>
+        A shorter session where the agent finds both prior runs cached in
+        SQLite memory and skips re-running them entirely. Demonstrates
+        the cost-savings of structured run memory across sessions.
+      </p>
+      <p class="meta">3 iterations · cached run lookup</p>
+    </a>
+
+  </div>
+</section>
+
+<section class="section">
+  <h2>What's in the box</h2>
+  <ul class="feature-list">
+    <li><b>Backtest engine</b> with a pinned lookahead-safety contract (orders at bar <code>t</code> fill at bar <code>t+1</code>'s open), configurable slippage and commission.</li>
+    <li><b>ReAct agent</b> driven by Claude with eight tools — list strategies, read strategy code, run backtest, search memory, get run details, compare runs, list SEC filings, fetch filing text.</li>
+    <li><b>Structured SQLite memory</b> indexed by strategy / symbol / Sharpe — past runs are skippable on the next session.</li>
+    <li><b>Per-session cost cap</b> hard-kills the loop if the dollar or token budget is exceeded.</li>
+    <li><b>Replay command</b> re-runs an old session's tool calls against current code, surfaces semantic drift (timestamps and run IDs redacted).</li>
+    <li><b>Quant rigor pack</b>: every backtest reports the buy-and-hold benchmark + Sharpe t-stat / p-value; <code>walk-forward</code> and <code>param-sweep</code> CLIs for honest validation.</li>
+    <li><b>SEC EDGAR data source</b> via <code>edgartools</code>, including a filings-sentiment strategy with a Claude-driven variant for LLM-based signal extraction.</li>
+    <li><b>Alpaca paper-trading runner</b> on the same Strategy interface. Constructor refuses live mode by design (raises <code>NotImplementedError</code>).</li>
+    <li><b>Remote MCP client</b> on the official <code>mcp</code> SDK — connect to any OAuth-protected MCP server and merge its tools into the agent's registry.</li>
+  </ul>
+</section>
+
+<footer>
+  <p>
+    Source on <a href="https://github.com/LaithAskar/ai-trading-agent">GitHub</a>.
+    Built by <a href="https://github.com/LaithAskar">Laith Askar</a> with
+    <a href="https://claude.ai/code">Claude Code</a>.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>
