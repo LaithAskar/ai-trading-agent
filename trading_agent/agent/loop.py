@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -15,8 +15,9 @@ from rich.syntax import Syntax
 
 from ..config import AGENT_LOGS_DIR, MEMORY_DB
 from .memory import Memory
+from .pricing import estimate_cost
 from .prompts import SYSTEM_PROMPT
-from .tools import Tool, build_tool_registry
+from .tools import build_tool_registry
 
 console = Console()
 
@@ -29,6 +30,8 @@ class TranscriptEntry:
     tool_input: dict | None
     tool_result: str | None
     is_final: bool
+    tool_duration_ms: int | None = None
+    is_error: bool = False
 
 
 @dataclass
@@ -41,8 +44,10 @@ class AgentSession:
     transcript: list[TranscriptEntry] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    cost_dollars: float = 0.0
     finished: bool = False
     final_summary: str | None = None
+    stopped_by: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -53,7 +58,9 @@ class AgentSession:
             "started_at": self.started_at,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cost_dollars": round(self.cost_dollars, 6),
             "finished": self.finished,
+            "stopped_by": self.stopped_by,
             "final_summary": self.final_summary,
             "transcript": [
                 {
@@ -62,6 +69,8 @@ class AgentSession:
                     "tool_name": e.tool_name,
                     "tool_input": e.tool_input,
                     "tool_result": e.tool_result,
+                    "tool_duration_ms": e.tool_duration_ms,
+                    "is_error": e.is_error,
                     "is_final": e.is_final,
                 }
                 for e in self.transcript
@@ -86,9 +95,10 @@ def _render_action(tool_name: str, tool_input: dict) -> None:
     )
 
 
-def _render_observation(result_json: str, is_error: bool) -> None:
+def _render_observation(result_json: str, is_error: bool, duration_ms: int | None = None) -> None:
     color = "red" if is_error else "green"
-    label = "Observation (error)" if is_error else "Observation"
+    base_label = "Observation (error)" if is_error else "Observation"
+    label = f"{base_label}  ({duration_ms} ms)" if duration_ms is not None else base_label
     try:
         pretty = json.dumps(json.loads(result_json), indent=2, default=str)
     except json.JSONDecodeError:
@@ -108,6 +118,16 @@ def _render_final(text: str) -> None:
     console.print(Panel(text.strip(), title="[bold green]Final Answer[/bold green]", border_style="green"))
 
 
+def _render_cap_hit(reason: str) -> None:
+    console.print(
+        Panel(
+            reason,
+            title="[bold red]Session Cap Hit — stopping[/bold red]",
+            border_style="red",
+        )
+    )
+
+
 def run_agent(
     *,
     goal: str,
@@ -115,14 +135,16 @@ def run_agent(
     model: str = "claude-sonnet-4-6",
     max_iters: int = 20,
     max_tokens_per_call: int = 4096,
+    max_session_tokens: int = 200_000,
+    max_session_dollars: float = 1.00,
     api_key: str | None = None,
 ) -> AgentSession:
     """Run the ReAct agent on a single goal.
 
-    mode:
-      - 'auto': fully autonomous; tools execute without confirmation.
-      - 'interactive': prompts the user before each tool execution. Matches the
-        course Module 3 demo of fully-automated vs semi-automated agent runs.
+    Safety caps (hard kill the loop if exceeded):
+      - max_iters:           bound on iterations
+      - max_session_tokens:  bound on cumulative input + output tokens
+      - max_session_dollars: bound on cumulative estimated $ cost
     """
     if mode not in ("auto", "interactive"):
         raise ValueError(f"mode must be 'auto' or 'interactive', got {mode!r}")
@@ -142,8 +164,13 @@ def run_agent(
 
     console.rule(f"[bold]Agent session {session.session_id}[/bold]  ({mode}, {model})")
     console.print(Panel(goal, title="[bold]Goal[/bold]", border_style="white"))
+    console.print(
+        f"[dim]caps: {max_iters} iters  |  {max_session_tokens:,} tokens  |  "
+        f"${max_session_dollars:.2f}[/dim]"
+    )
 
     messages: list[dict] = [{"role": "user", "content": goal}]
+    cap_hit_reason: str | None = None
 
     for iteration in range(1, max_iters + 1):
         console.rule(f"[dim]iteration {iteration}/{max_iters}[/dim]")
@@ -164,10 +191,13 @@ def run_agent(
             )
         except anthropic.APIError as e:
             console.print(f"[red]API error: {e}[/red]")
+            cap_hit_reason = f"API error: {e}"
             break
 
         session.input_tokens += response.usage.input_tokens
         session.output_tokens += response.usage.output_tokens
+        cost = estimate_cost(model, session.input_tokens, session.output_tokens)
+        session.cost_dollars = cost.total_dollars
 
         thought_parts: list[str] = []
         tool_uses: list[Any] = []
@@ -199,6 +229,7 @@ def run_agent(
         if not tool_uses:
             console.print("[yellow]No tool call and no end_turn — terminating to avoid loop[/yellow]")
             session.final_summary = thought_text or "(no output)"
+            cap_hit_reason = "stalled (no tool call, no end_turn)"
             break
 
         messages.append({"role": "assistant", "content": response.content})
@@ -215,7 +246,6 @@ def run_agent(
                 )
                 if not approved:
                     result_str = json.dumps({"error": "User rejected this action"})
-                    is_error = True
                     _render_observation(result_str, is_error=True)
                     tool_results_for_user.append(
                         {
@@ -232,20 +262,24 @@ def run_agent(
                             tool_name=tool_name,
                             tool_input=tool_input,
                             tool_result=result_str,
+                            tool_duration_ms=0,
+                            is_error=True,
                             is_final=False,
                         )
                     )
                     continue
 
             tool = registry.get(tool_name)
+            t0 = time.perf_counter()
             if tool is None:
                 result_str = json.dumps({"error": f"unknown tool: {tool_name}"})
                 is_error = True
             else:
                 result_str = tool.call(tool_input)
                 is_error = '"error"' in result_str[:50]
+            duration_ms = int((time.perf_counter() - t0) * 1000)
 
-            _render_observation(result_str, is_error=is_error)
+            _render_observation(result_str, is_error=is_error, duration_ms=duration_ms)
 
             tool_results_for_user.append(
                 {
@@ -262,15 +296,34 @@ def run_agent(
                     tool_name=tool_name,
                     tool_input=tool_input,
                     tool_result=result_str,
+                    tool_duration_ms=duration_ms,
+                    is_error=is_error,
                     is_final=False,
                 )
             )
 
         messages.append({"role": "user", "content": tool_results_for_user})
 
+        # Hard-kill the loop if cumulative caps exceeded.
+        total_tokens = session.input_tokens + session.output_tokens
+        if total_tokens > max_session_tokens:
+            cap_hit_reason = (
+                f"token cap exceeded: {total_tokens:,} > {max_session_tokens:,}"
+            )
+            break
+        if session.cost_dollars > max_session_dollars:
+            cap_hit_reason = (
+                f"dollar cap exceeded: ${session.cost_dollars:.4f} > ${max_session_dollars:.2f}"
+            )
+            break
+
     else:
-        console.print(f"[yellow]Hit max_iters={max_iters} without final answer.[/yellow]")
-        session.final_summary = "(stopped: max iterations reached)"
+        cap_hit_reason = f"max_iters={max_iters} reached"
+
+    if cap_hit_reason and not session.finished:
+        _render_cap_hit(cap_hit_reason)
+        session.stopped_by = cap_hit_reason
+        session.final_summary = f"(stopped: {cap_hit_reason})"
 
     _persist_session(session, memory)
     _print_summary(session)
@@ -300,6 +353,8 @@ def _print_summary(session: AgentSession) -> None:
         f"  iterations:    {len(session.transcript)}\n"
         f"  input tokens:  {session.input_tokens:,}\n"
         f"  output tokens: {session.output_tokens:,}\n"
+        f"  est. cost:     ${session.cost_dollars:.4f}\n"
         f"  finished:      {session.finished}\n"
+        f"  stopped_by:    {session.stopped_by or '(completed normally)'}\n"
         f"  log:           data/logs/agent_runs/{session.session_id}.json"
     )

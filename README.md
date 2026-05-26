@@ -13,8 +13,8 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
   - Stops when it has a final answer
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
-- **CLI**: backtest, list strategies, run agent.
-- **25 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
+- **CLI**: backtest, list strategies, run agent, replay past sessions, agent-stats, render HTML transcripts.
+- **36 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
 
 ## Setup
 
@@ -53,6 +53,28 @@ python -m trading_agent agent --goal "..." --model claude-opus-4-7
 The agent emits visible **Thought → Action → Observation** panels as it runs. Every session is logged to `data/logs/agent_runs/<session_id>.json` and indexed in `data/memory.sqlite3` so the next session can `search_memory` to find prior work.
 
 A rendered sample transcript lives at [`docs/examples/sample-session.html`](docs/examples/sample-session.html) — that one shows the agent finding two prior backtests in memory and skipping the re-runs.
+
+## Observability and safety (V3)
+
+**Cost caps.** Every session has hard limits on cumulative tokens *and* dollars. If either is exceeded, the loop stops immediately, the cap-hit reason is logged in the session JSON's `stopped_by` field, and a red "Session Cap Hit" panel appears in the terminal. Configurable via `AGENT_MAX_SESSION_DOLLARS` and `AGENT_MAX_SESSION_TOKENS`, or `--max-dollars` / `--max-tokens` flags. This is the answer to "how do you prevent the agent from looping and burning $5k by accident."
+
+**Per-tool observability.** Every tool execution records its duration and whether it errored. Aggregate across all sessions:
+
+```powershell
+python -m trading_agent agent-stats
+```
+
+Shows total $/tokens, per-tool call count + avg/p95 latency + error rate, and a recent-sessions table.
+
+**Replay for regression detection.** Given any past session JSON, the `replay` command re-executes every tool call against current code and diffs the outputs:
+
+```powershell
+python -m trading_agent replay <session_id>   # or "latest"
+```
+
+Drift detection knows to redact volatile fields (timestamps, run IDs, artifact paths) so the diff highlights real semantic changes — e.g., adding 5 bps slippage caused `run_backtest` to return 20.67% instead of 25.92% on the same input, and replay catches that.
+
+*Known limitation*: replaying `run_backtest` actually executes a new backtest (and adds a row to memory). Read-only replay mode is a future improvement.
 
 ## Agent architecture
 
@@ -126,4 +148,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-25 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
+36 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).

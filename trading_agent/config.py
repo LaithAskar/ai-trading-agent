@@ -23,6 +23,8 @@ class Config:
     agent_model: str
     agent_max_iters: int
     agent_max_tokens_per_call: int
+    agent_max_session_tokens: int
+    agent_max_session_dollars: float
 
     @classmethod
     def load(cls) -> "Config":
@@ -34,6 +36,8 @@ class Config:
             agent_model=os.getenv("AGENT_MODEL", "claude-sonnet-4-6"),
             agent_max_iters=int(os.getenv("AGENT_MAX_ITERS", "20")),
             agent_max_tokens_per_call=int(os.getenv("AGENT_MAX_TOKENS_PER_CALL", "4096")),
+            agent_max_session_tokens=int(os.getenv("AGENT_MAX_SESSION_TOKENS", "200000")),
+            agent_max_session_dollars=float(os.getenv("AGENT_MAX_SESSION_DOLLARS", "1.00")),
         )
 
 

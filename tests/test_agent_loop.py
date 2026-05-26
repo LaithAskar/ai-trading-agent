@@ -158,4 +158,5 @@ def test_loop_stops_at_max_iters(tmp_path, monkeypatch):
 
     assert not session.finished
     assert len(session.transcript) == 3
-    assert "max iterations" in session.final_summary
+    assert "max_iters" in session.final_summary
+    assert session.stopped_by is not None and "max_iters" in session.stopped_by
