@@ -66,7 +66,26 @@ def test_render_session_file_writes_html(tmp_path):
     out = render_session_file(src)
     assert out.exists()
     assert out.suffix == ".html"
-    assert "abc123" in out.read_text()
+    assert "abc123" in out.read_text(encoding="utf-8")
+
+
+def test_render_html_has_player_controls():
+    out = render_html(SAMPLE_SESSION)
+    assert 'id="btn-play"' in out
+    assert 'id="btn-next"' in out
+    assert 'id="btn-reset"' in out
+    assert 'id="btn-end"' in out
+    assert 'id="sel-speed"' in out
+
+
+def test_render_html_iterations_start_hidden():
+    """The whole point: iterations only become visible on click/play."""
+    out = render_html(SAMPLE_SESSION)
+    # The .iteration class starts opacity:0 and gets .visible on reveal
+    assert 'class="iteration"' in out
+    assert ".iteration.visible" in out
+    # Make sure the JS that adds .visible is present
+    assert "classList.add('visible')" in out
 
 
 def test_render_html_marks_error_observations():
