@@ -14,7 +14,7 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **64 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
+- **78 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
 
 ## Setup
 
@@ -105,9 +105,32 @@ python -m trading_agent agent --goal "Look at the most recent 10-Q for NVDA and 
 
 The reference strategy uses Loughran-McDonald-style word counting on filing text and trades on sentiment **momentum** (quarter-over-quarter change) rather than absolute level — SEC filings are mandated to disclose risks so absolute scores are always negative; what matters is the direction.
 
+A second variant, `filings_sentiment_llm`, replaces the word counter with Claude reading the filing. Same momentum logic, much better signal extraction. Results are cached in `data/llm_cache.sqlite3` keyed on `(ticker, accession, model, prompt_hash)` so reruns are free + deterministic. Pass `cache_only=true` as a strategy param to refuse new API calls (e.g., for cost-controlled rebacktests).
+
+```powershell
+# First run: hits Claude on each filing, caches results
+python -m trading_agent backtest --strategy filings_sentiment_llm --symbol AAPL --start 2023-01-01 --end 2025-12-31
+
+# Reruns: free + deterministic from cache
+python -m trading_agent backtest --strategy filings_sentiment_llm --symbol AAPL --start 2023-01-01 --end 2025-12-31 --param cache_only=true
+```
+
 ## Quant rigor (V5)
 
 Every backtest now also computes the buy-and-hold benchmark for the same window and a Sharpe significance test (t-stat + two-sided p-value vs. the null Sharpe=0). When p ≥ 0.10 the CLI surfaces a yellow warning.
+
+**Parameter sweep:**
+
+```powershell
+# Cartesian grid: 9 backtests, ranked by Sharpe
+python -m trading_agent param-sweep --strategy sma_cross --symbol AAPL --start 2020-01-01 --end 2024-12-31 --grid "fast=10,20,50" --grid "slow=50,100,200"
+
+# Combine with walk-forward — each combo runs through rolling splits,
+# ranked by OUT-OF-SAMPLE Sharpe mean. The robust version.
+python -m trading_agent param-sweep --strategy sma_cross --symbol AAPL --start 2018-01-01 --end 2024-12-31 --grid "fast=10,20,50" --grid "slow=50,100,200" --walk-forward --train-years 2 --test-years 1
+```
+
+The sweep on `sma_cross` over AAPL 2020–2024 found that **no parameter combination beat buy-and-hold** (28.5% CAGR), and most combos had a Sharpe p-value > 0.1 — i.e., statistically indistinguishable from random. That's not a failure of the platform; that's the platform doing its job.
 
 **Walk-forward validation:**
 
@@ -208,4 +231,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-64 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
+78 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).

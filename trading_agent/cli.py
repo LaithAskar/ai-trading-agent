@@ -194,6 +194,148 @@ def paper_trade(
         console.print(f"[yellow]{result.skipped_reason}[/yellow]")
 
 
+def _expand_grid(grid_args: list[str]) -> list[dict]:
+    """Expand `--grid key=v1,v2,v3` flags into the cartesian product of param dicts.
+
+    Each --grid is one parameter and a comma-separated value list. Values are
+    coerced int -> float -> str in that order (same rules as --param).
+    """
+    if not grid_args:
+        return [{}]
+    axes: list[tuple[str, list]] = []
+    for spec in grid_args:
+        if "=" not in spec:
+            raise typer.BadParameter(f"--grid expects key=v1,v2,..., got '{spec}'")
+        key, raw_values = spec.split("=", 1)
+        vals: list = []
+        for v in raw_values.split(","):
+            v = v.strip()
+            try:
+                vals.append(int(v))
+            except ValueError:
+                try:
+                    vals.append(float(v))
+                except ValueError:
+                    vals.append(v)
+        axes.append((key, vals))
+
+    combos: list[dict] = [{}]
+    for key, vals in axes:
+        combos = [{**combo, key: v} for combo in combos for v in vals]
+    return combos
+
+
+@app.command(name="param-sweep")
+def param_sweep(
+    strategy: str = typer.Option(..., help="Strategy module name"),
+    symbol: str = typer.Option(..., help="Ticker"),
+    start: str = typer.Option(..., help="Backtest start YYYY-MM-DD"),
+    end: str = typer.Option(..., help="Backtest end YYYY-MM-DD"),
+    grid: list[str] = typer.Option(  # noqa: B008
+        [], "--grid",
+        help="Repeatable: 'param=val1,val2,val3'. Cartesian product is run.",
+    ),
+    walk_forward_flag: bool = typer.Option(
+        False, "--walk-forward",
+        help="Run each combo through walk-forward instead of one window. Slower, more honest.",
+    ),
+    train_years: float = typer.Option(2.0),
+    test_years: float = typer.Option(1.0),
+    stride_years: float = typer.Option(1.0),
+) -> None:
+    """Grid-search a strategy's parameters. Default: single-window. With
+    --walk-forward, each combo runs through rolling train/test splits and
+    we report OOS-CAGR mean+stdev so you can rank by *robustness* not just
+    in-sample fit.
+    """
+    from .backtest.rigor import walk_forward_splits
+    from .backtest.runner import run_backtest as _rb
+
+    Config.load()
+    ensure_dirs()
+
+    combos = _expand_grid(grid)
+    console.print(f"[dim]Running {len(combos)} param combo(s)[/dim]")
+
+    if walk_forward_flag:
+        splits = walk_forward_splits(start, end, train_years, test_years, stride_years)
+        if not splits:
+            console.print(f"[red]No splits between {start} and {end}[/red]")
+            raise typer.Exit(1)
+
+        table = Table(title=f"Walk-forward sweep: {strategy} on {symbol}")
+        table.add_column("Params")
+        table.add_column("OOS CAGR mean", justify="right")
+        table.add_column("OOS CAGR stdev", justify="right")
+        table.add_column("OOS Sharpe mean", justify="right")
+        table.add_column("Splits", justify="right")
+
+        results = []
+        for combo in combos:
+            cagrs, sharpes = [], []
+            for s in splits:
+                try:
+                    r = _rb(
+                        strategy_name=strategy, symbol=symbol,
+                        start=s.test_start, end=s.test_end,
+                        params=combo, write_artifacts=False,
+                    )
+                    cagrs.append(r.metrics.cagr_pct)
+                    sharpes.append(r.metrics.sharpe)
+                except Exception:
+                    continue
+            if not cagrs:
+                continue
+            import statistics
+            cagr_mean = statistics.mean(cagrs)
+            cagr_std = statistics.stdev(cagrs) if len(cagrs) > 1 else 0.0
+            sharpe_mean = statistics.mean(sharpes)
+            results.append((combo, cagr_mean, cagr_std, sharpe_mean, len(cagrs)))
+
+        results.sort(key=lambda r: -r[3])  # by Sharpe mean
+        for combo, c_m, c_s, s_m, n in results:
+            table.add_row(
+                ", ".join(f"{k}={v}" for k, v in combo.items()) or "(none)",
+                f"{c_m:.2f}%", f"{c_s:.2f}%", f"{s_m:.2f}", str(n),
+            )
+        console.print(table)
+        return
+
+    # Single-window mode
+    table = Table(title=f"Param sweep: {strategy} on {symbol}  ({start} → {end})")
+    table.add_column("Params")
+    table.add_column("CAGR", justify="right")
+    table.add_column("Sharpe", justify="right")
+    table.add_column("Max DD", justify="right")
+    table.add_column("B&H CAGR", justify="right")
+    table.add_column("p-value", justify="right")
+    table.add_column("Round trips", justify="right")
+
+    results = []
+    for combo in combos:
+        try:
+            r = _rb(
+                strategy_name=strategy, symbol=symbol,
+                start=start, end=end, params=combo, write_artifacts=False,
+            )
+            results.append((combo, r))
+        except Exception as e:
+            console.print(f"[red]combo {combo} failed: {e}[/red]")
+
+    results.sort(key=lambda x: -x[1].metrics.sharpe)
+    for combo, r in results:
+        table.add_row(
+            ", ".join(f"{k}={v}" for k, v in combo.items()) or "(none)",
+            f"{r.metrics.cagr_pct:.2f}%",
+            f"{r.metrics.sharpe:.2f}",
+            f"{r.metrics.max_drawdown_pct:.2f}%",
+            f"{r.benchmark.cagr_pct:.2f}%",
+            f"{r.sharpe_p_value:.3f}",
+            str(r.metrics.num_round_trips),
+        )
+    console.print(table)
+
+
 @app.command(name="walk-forward")
 def walk_forward(
     strategy: str = typer.Option(..., help="Strategy module name"),

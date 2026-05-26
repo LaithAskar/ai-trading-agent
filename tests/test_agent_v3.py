@@ -261,7 +261,7 @@ def test_replay_no_drift_for_matching_output(tmp_path, monkeypatch):
                 "iteration": 1,
                 "tool_name": "list_strategies",
                 "tool_input": {},
-                "tool_result": json.dumps(["filings_sentiment", "rsi_mean_rev", "sma_cross"]),
+                "tool_result": json.dumps(["filings_sentiment", "filings_sentiment_llm", "rsi_mean_rev", "sma_cross"]),
                 "is_final": False,
             }
         ],
