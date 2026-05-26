@@ -13,8 +13,8 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
   - Stops when it has a final answer
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
-- **CLI**: backtest, list strategies, run agent, replay past sessions, agent-stats, render HTML transcripts.
-- **36 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
+- **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
+- **41 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
 
 ## Setup
 
@@ -75,6 +75,25 @@ python -m trading_agent replay <session_id>   # or "latest"
 Drift detection knows to redact volatile fields (timestamps, run IDs, artifact paths) so the diff highlights real semantic changes — e.g., adding 5 bps slippage caused `run_backtest` to return 20.67% instead of 25.92% on the same input, and replay catches that.
 
 *Known limitation*: replaying `run_backtest` actually executes a new backtest (and adds a row to memory). Read-only replay mode is a future improvement.
+
+## Remote MCP servers (V4)
+
+The agent can also use tools from any remote Model Context Protocol server — NexusTrade, GitHub, anything that speaks MCP over HTTP with OAuth. The flow:
+
+```powershell
+# One-time: authenticate (opens your browser for OAuth)
+python -m trading_agent mcp-connect https://mcp.example.com
+
+# Then point the agent at it. Built-in + remote tools coexist in one registry.
+python -m trading_agent agent --mcp-server https://mcp.example.com --goal "..."
+```
+
+Tokens are persisted under `data/mcp/` so subsequent runs don't re-authenticate. Remote tools are exposed to the agent with an `mcp_` prefix and a `[MCP: <url>]` label in the description, so the LLM can tell them apart from built-ins. Name collisions log a warning and remote wins.
+
+OAuth implementation details:
+- Local HTTP server on a free port catches the redirect (standard desktop OAuth pattern).
+- `mcp.client.auth.OAuthClientProvider` from the official SDK handles client registration, code exchange, and refresh.
+- `FileTokenStorage` persists tokens + client info as JSON, one file pair per server URL.
 
 ## Agent architecture
 
@@ -148,4 +167,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-36 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
+41 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).

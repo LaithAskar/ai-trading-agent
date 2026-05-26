@@ -138,6 +138,7 @@ def run_agent(
     max_session_tokens: int = 200_000,
     max_session_dollars: float = 1.00,
     api_key: str | None = None,
+    extra_tools: list | None = None,
 ) -> AgentSession:
     """Run the ReAct agent on a single goal.
 
@@ -158,6 +159,10 @@ def run_agent(
     )
     memory = Memory(MEMORY_DB)
     registry = build_tool_registry(memory)
+    for t in (extra_tools or []):
+        if t.name in registry:
+            console.print(f"[yellow]Tool name collision on {t.name!r}; remote version wins.[/yellow]")
+        registry[t.name] = t
     tool_schemas = [t.anthropic_schema() for t in registry.values()]
 
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()

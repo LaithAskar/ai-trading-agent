@@ -93,6 +93,42 @@ def list_strategies() -> None:
     console.print(table)
 
 
+@app.command(name="mcp-connect")
+def mcp_connect(
+    url: str = typer.Argument(..., help="Remote MCP server URL (e.g. https://mcp.example.com)"),
+) -> None:
+    """Authenticate with a remote MCP server via OAuth and list its tools.
+
+    Opens your browser to the auth URL. Once you approve, the tokens are
+    stored under data/mcp/ and subsequent agent runs can use --mcp-server <url>
+    to load that server's tools alongside the built-in ones.
+    """
+    from .agent.mcp_client import discover_tools, is_authenticated
+
+    Config.load()
+    ensure_dirs()
+
+    already = is_authenticated(url)
+    if already:
+        console.print(f"[dim]Existing tokens found for {url}; refreshing tool list.[/dim]")
+
+    console.print(f"[bold]Connecting to[/bold] {url}")
+    try:
+        tools = discover_tools(url)
+    except Exception as e:
+        console.print(f"[red]Connection failed: {type(e).__name__}: {e}[/red]")
+        raise typer.Exit(1)
+
+    table = Table(title=f"Tools exposed by {url}")
+    table.add_column("Name")
+    table.add_column("Description")
+    for t in tools:
+        desc = (t.description or "").replace("\n", " ")[:80]
+        table.add_row(t.name, desc)
+    console.print(table)
+    console.print(f"[green]Done.[/green] {len(tools)} tool(s) available. Run the agent with --mcp-server {url}")
+
+
 @app.command(name="agent-stats")
 def agent_stats() -> None:
     """Aggregate stats across all stored agent sessions.
@@ -252,6 +288,9 @@ def agent(
     max_dollars: float = typer.Option(0.0, help="Override AGENT_MAX_SESSION_DOLLARS (0 = use config)"),
     max_tokens: int = typer.Option(0, help="Override AGENT_MAX_SESSION_TOKENS (0 = use config)"),
     model: str = typer.Option("", help="Override AGENT_MODEL"),
+    mcp_server: list[str] = typer.Option(  # noqa: B008
+        [], "--mcp-server", help="URL of a remote MCP server whose tools the agent should also use (repeatable). Auth via `mcp-connect` first."
+    ),
 ) -> None:
     """Run the AI agent on a natural-language goal."""
     from .agent.loop import run_agent
@@ -268,6 +307,20 @@ def agent(
     if mode not in ("auto", "interactive"):
         raise typer.BadParameter("mode must be 'auto' or 'interactive'")
 
+    extra_tools = []
+    if mcp_server:
+        from .agent.mcp_client import discover_tools, is_authenticated
+        for url in mcp_server:
+            if not is_authenticated(url):
+                console.print(
+                    f"[red]Not authenticated to {url}.[/red] "
+                    f"Run: python -m trading_agent mcp-connect {url}"
+                )
+                raise typer.Exit(1)
+            console.print(f"[dim]Loading tools from {url}...[/dim]")
+            extra_tools.extend(discover_tools(url))
+        console.print(f"[dim]+{len(extra_tools)} MCP tool(s) loaded[/dim]")
+
     run_agent(
         goal=goal,
         mode=mode,
@@ -277,6 +330,7 @@ def agent(
         max_session_tokens=max_tokens or cfg.agent_max_session_tokens,
         max_session_dollars=max_dollars or cfg.agent_max_session_dollars,
         api_key=cfg.anthropic_api_key,
+        extra_tools=extra_tools,
     )
 
 

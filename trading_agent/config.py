@@ -13,6 +13,7 @@ RESULTS_DIR = DATA_DIR / "results"
 LOGS_DIR = DATA_DIR / "logs"
 AGENT_LOGS_DIR = LOGS_DIR / "agent_runs"
 MEMORY_DB = DATA_DIR / "memory.sqlite3"
+MCP_DIR = DATA_DIR / "mcp"
 
 
 @dataclass(frozen=True)
@@ -42,5 +43,5 @@ class Config:
 
 
 def ensure_dirs() -> None:
-    for d in (CACHE_DIR, RESULTS_DIR, LOGS_DIR, AGENT_LOGS_DIR):
+    for d in (CACHE_DIR, RESULTS_DIR, LOGS_DIR, AGENT_LOGS_DIR, MCP_DIR):
         d.mkdir(parents=True, exist_ok=True)
