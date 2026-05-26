@@ -2,6 +2,8 @@
 
 A backtest + AI research agent for stock trading strategies. Built ground-up — no LangChain, no agent frameworks. Direct Anthropic SDK with a hand-written ReAct loop.
 
+**🟢 Live interactive demo: https://laithaskar.github.io/ai-trading-agent/**
+
 ## What's in the box
 
 - **Backtest engine** with a pinned lookahead-safety contract (orders at bar `t` fill at bar `t+1`'s open), configurable slippage (default 5 bps) and commission (default $0).
