@@ -90,6 +90,110 @@ def backtest(
     console.print(f"[green]Wrote[/green] {run.artifact_dir}")
 
 
+@app.command(name="paper-status")
+def paper_status() -> None:
+    """Show current Alpaca paper account, positions, and open orders."""
+    from .broker.alpaca import AlpacaPaperBroker
+
+    cfg = Config.load()
+    ensure_dirs()
+    if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
+        console.print("[red]ALPACA_API_KEY / ALPACA_API_SECRET not set in .env[/red]")
+        raise typer.Exit(1)
+
+    broker = AlpacaPaperBroker(cfg.alpaca_api_key, cfg.alpaca_api_secret)
+    acct = broker.account()
+
+    table = Table(title="Alpaca paper account")
+    table.add_column("Field"); table.add_column("Value", justify="right")
+    table.add_row("Cash",          f"${acct.cash:,.2f}")
+    table.add_row("Portfolio val", f"${acct.portfolio_value:,.2f}")
+    table.add_row("Buying power",  f"${acct.buying_power:,.2f}")
+    table.add_row("Paper?",        "yes" if acct.is_paper else "NO (refusing)")
+    console.print(table)
+
+    positions = broker.positions()
+    if positions:
+        ptable = Table(title="Positions")
+        ptable.add_column("Symbol"); ptable.add_column("Qty", justify="right")
+        ptable.add_column("Avg entry", justify="right"); ptable.add_column("Mkt value", justify="right")
+        ptable.add_column("Unrealized P/L", justify="right")
+        for p in positions:
+            ptable.add_row(p.symbol, f"{p.quantity:g}", f"${p.avg_entry_price:.2f}",
+                           f"${p.market_value:,.2f}", f"${p.unrealized_pl:,.2f}")
+        console.print(ptable)
+    else:
+        console.print("[dim]No open positions[/dim]")
+
+    open_orders = broker.open_orders()
+    if open_orders:
+        otable = Table(title="Open orders")
+        otable.add_column("Order"); otable.add_column("Symbol"); otable.add_column("Side")
+        otable.add_column("Qty", justify="right"); otable.add_column("Status")
+        for o in open_orders:
+            otable.add_row(o.order_id[:8] + "...", o.symbol, o.side, f"{o.quantity:g}", o.status)
+        console.print(otable)
+
+
+@app.command(name="paper-trade")
+def paper_trade(
+    strategy: str = typer.Option(..., help="Strategy module name"),
+    symbol: str = typer.Option(..., help="Ticker"),
+    lookback_days: int = typer.Option(365, help="History days needed to replay strategy state"),
+    param: list[str] = typer.Option([], "--param"),  # noqa: B008
+    dry_run: bool = typer.Option(True, help="If true, show proposed orders without submitting"),
+) -> None:
+    """Run one tick of the strategy against current market data and (optionally)
+    submit any proposed orders to Alpaca paper.
+
+    Default is dry-run. Pass --no-dry-run to actually submit.
+    """
+    from .broker.alpaca import AlpacaPaperBroker
+    from .broker.paper_runner import paper_tick
+
+    cfg = Config.load()
+    ensure_dirs()
+
+    params = _parse_params(param)
+
+    broker = None
+    if not dry_run:
+        if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
+            console.print("[red]ALPACA_API_KEY / ALPACA_API_SECRET required when --no-dry-run.[/red]")
+            raise typer.Exit(1)
+        broker = AlpacaPaperBroker(cfg.alpaca_api_key, cfg.alpaca_api_secret)
+
+    result = paper_tick(
+        strategy_name=strategy,
+        symbol=symbol,
+        params=params,
+        lookback_days=lookback_days,
+        broker=broker,
+        dry_run=dry_run,
+    )
+
+    console.print(f"[bold]Strategy:[/bold] {result.strategy}  [bold]Symbol:[/bold] {result.symbol}  [bold]Bars replayed:[/bold] {result.bars_seen}")
+    if result.proposed_orders:
+        otable = Table(title="Proposed orders")
+        otable.add_column("Symbol"); otable.add_column("Side"); otable.add_column("Qty", justify="right")
+        for o in result.proposed_orders:
+            otable.add_row(o.symbol, o.side.value, f"{o.quantity:g}")
+        console.print(otable)
+    else:
+        console.print("[dim]No orders proposed this tick.[/dim]")
+
+    if result.dry_run:
+        console.print("[yellow]Dry run — nothing submitted. Re-run with --no-dry-run to send to Alpaca paper.[/yellow]")
+    elif result.submitted:
+        stable = Table(title="Submitted")
+        stable.add_column("Order"); stable.add_column("Symbol"); stable.add_column("Status")
+        for o in result.submitted:
+            stable.add_row(o.order_id[:8] + "...", o.symbol, o.status)
+        console.print(stable)
+    if result.skipped_reason:
+        console.print(f"[yellow]{result.skipped_reason}[/yellow]")
+
+
 @app.command(name="walk-forward")
 def walk_forward(
     strategy: str = typer.Option(..., help="Strategy module name"),

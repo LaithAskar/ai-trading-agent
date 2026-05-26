@@ -27,6 +27,9 @@ class Config:
     agent_max_session_tokens: int
     agent_max_session_dollars: float
     sec_user_agent: str
+    alpaca_api_key: str | None
+    alpaca_api_secret: str | None
+    alpaca_paper: bool
 
     @classmethod
     def load(cls) -> "Config":
@@ -41,6 +44,9 @@ class Config:
             agent_max_session_tokens=int(os.getenv("AGENT_MAX_SESSION_TOKENS", "200000")),
             agent_max_session_dollars=float(os.getenv("AGENT_MAX_SESSION_DOLLARS", "1.00")),
             sec_user_agent=os.getenv("SEC_USER_AGENT", "trading-agent research dev@example.com"),
+            alpaca_api_key=os.getenv("ALPACA_API_KEY") or None,
+            alpaca_api_secret=os.getenv("ALPACA_API_SECRET") or None,
+            alpaca_paper=os.getenv("ALPACA_PAPER", "true").lower() == "true",
         )
 
 

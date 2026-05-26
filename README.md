@@ -5,7 +5,7 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 ## What's in the box
 
 - **Backtest engine** with a pinned lookahead-safety contract (orders at bar `t` fill at bar `t+1`'s open), configurable slippage (default 5 bps) and commission (default $0).
-- **Pluggable Strategy interface** — drop a Python class in `strategies/` and the platform discovers it. Reference strategies: `sma_cross`, `rsi_mean_rev`.
+- **Pluggable Strategy interface** — drop a Python class in `strategies/` and the platform discovers it. Reference strategies: `sma_cross`, `rsi_mean_rev`, `filings_sentiment` (uses SEC EDGAR data).
 - **AI agent** that runs the platform autonomously via a ReAct loop:
   - Thinks in plain English about what to do next
   - Calls tools (`list_strategies`, `run_backtest`, `search_memory`, ...)
@@ -14,7 +14,7 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **41 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
+- **64 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
 
 ## Setup
 
@@ -75,6 +75,47 @@ python -m trading_agent replay <session_id>   # or "latest"
 Drift detection knows to redact volatile fields (timestamps, run IDs, artifact paths) so the diff highlights real semantic changes — e.g., adding 5 bps slippage caused `run_backtest` to return 20.67% instead of 25.92% on the same input, and replay catches that.
 
 *Known limitation*: replaying `run_backtest` actually executes a new backtest (and adds a row to memory). Read-only replay mode is a future improvement.
+
+## Paper trading via Alpaca (V5)
+
+Same `Strategy` interface, different runner. Set `ALPACA_API_KEY` and `ALPACA_API_SECRET` in `.env` (paper credentials from app.alpaca.markets/paper/dashboard/overview).
+
+```powershell
+# Check account state
+python -m trading_agent paper-status
+
+# Dry-run: replay strategy history, show what orders WOULD be submitted
+python -m trading_agent paper-trade --strategy sma_cross --symbol AAPL --param fast=20 --param slow=50
+
+# Actually submit
+python -m trading_agent paper-trade --strategy sma_cross --symbol AAPL --param fast=20 --param slow=50 --no-dry-run
+```
+
+The broker is hardcoded to paper. `AlpacaPaperBroker(..., allow_live=True)` raises `NotImplementedError` — live trading is *physically impossible* in this codebase, by design.
+
+## SEC EDGAR filings + filings_sentiment strategy (V5)
+
+```powershell
+# Backtest the filings-sentiment strategy
+python -m trading_agent backtest --strategy filings_sentiment --symbol AAPL --start 2023-01-01 --end 2025-12-31
+
+# Agent can also fetch + reason over filings via the list_filings and fetch_filing tools
+python -m trading_agent agent --goal "Look at the most recent 10-Q for NVDA and tell me whether sentiment has improved or worsened versus the prior quarter."
+```
+
+The reference strategy uses Loughran-McDonald-style word counting on filing text and trades on sentiment **momentum** (quarter-over-quarter change) rather than absolute level — SEC filings are mandated to disclose risks so absolute scores are always negative; what matters is the direction.
+
+## Quant rigor (V5)
+
+Every backtest now also computes the buy-and-hold benchmark for the same window and a Sharpe significance test (t-stat + two-sided p-value vs. the null Sharpe=0). When p ≥ 0.10 the CLI surfaces a yellow warning.
+
+**Walk-forward validation:**
+
+```powershell
+python -m trading_agent walk-forward --strategy sma_cross --symbol AAPL --start 2018-01-01 --end 2024-12-31 --train-years 2 --test-years 1 --param fast=20 --param slow=50
+```
+
+Runs the strategy on rolling train→test splits and reports OOS CAGR per split plus the mean+stdev across splits. Most strategies that look great on a single backtest fall apart here — that's the point.
 
 ## Remote MCP servers (V4)
 
@@ -167,4 +208,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-41 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
+64 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
