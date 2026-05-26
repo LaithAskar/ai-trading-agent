@@ -139,6 +139,7 @@ def run_agent(
     max_session_dollars: float = 1.00,
     api_key: str | None = None,
     extra_tools: list | None = None,
+    on_iteration=None,
 ) -> AgentSession:
     """Run the ReAct agent on a single goal.
 
@@ -219,16 +220,17 @@ def run_agent(
             _render_final(thought_text)
             session.final_summary = thought_text
             session.finished = True
-            session.transcript.append(
-                TranscriptEntry(
-                    iteration=iteration,
-                    thought=thought_text,
-                    tool_name=None,
-                    tool_input=None,
-                    tool_result=None,
-                    is_final=True,
-                )
+            entry = TranscriptEntry(
+                iteration=iteration,
+                thought=thought_text,
+                tool_name=None,
+                tool_input=None,
+                tool_result=None,
+                is_final=True,
             )
+            session.transcript.append(entry)
+            if on_iteration:
+                on_iteration(entry)
             break
 
         if not tool_uses:
@@ -260,18 +262,19 @@ def run_agent(
                             "is_error": True,
                         }
                     )
-                    session.transcript.append(
-                        TranscriptEntry(
-                            iteration=iteration,
-                            thought=thought_text,
-                            tool_name=tool_name,
-                            tool_input=tool_input,
-                            tool_result=result_str,
-                            tool_duration_ms=0,
-                            is_error=True,
-                            is_final=False,
-                        )
+                    entry = TranscriptEntry(
+                        iteration=iteration,
+                        thought=thought_text,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        tool_result=result_str,
+                        tool_duration_ms=0,
+                        is_error=True,
+                        is_final=False,
                     )
+                    session.transcript.append(entry)
+                    if on_iteration:
+                        on_iteration(entry)
                     continue
 
             tool = registry.get(tool_name)
@@ -294,18 +297,19 @@ def run_agent(
                     "is_error": is_error,
                 }
             )
-            session.transcript.append(
-                TranscriptEntry(
-                    iteration=iteration,
-                    thought=thought_text,
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    tool_result=result_str,
-                    tool_duration_ms=duration_ms,
-                    is_error=is_error,
-                    is_final=False,
-                )
+            entry = TranscriptEntry(
+                iteration=iteration,
+                thought=thought_text,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                tool_result=result_str,
+                tool_duration_ms=duration_ms,
+                is_error=is_error,
+                is_final=False,
             )
+            session.transcript.append(entry)
+            if on_iteration:
+                on_iteration(entry)
 
         messages.append({"role": "user", "content": tool_results_for_user})
 

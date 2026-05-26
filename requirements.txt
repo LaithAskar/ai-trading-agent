@@ -9,4 +9,5 @@ anthropic>=0.40.0
 mcp>=1.0.0
 edgartools>=5.0.0
 alpaca-py>=0.43.0
+streamlit>=1.30.0
 pytest>=8.0.0
