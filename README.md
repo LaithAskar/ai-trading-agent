@@ -2,7 +2,9 @@
 
 A backtest + AI research agent for stock trading strategies. Built ground-up — no LangChain, no agent frameworks. Direct Anthropic SDK with a hand-written ReAct loop.
 
-**🟢 Live interactive demo: https://laithaskar.github.io/ai-trading-agent/**
+**🟢 Try it live**:
+- **Web app** (run the agent, backtest, paper trade — all in your browser): https://ai-trading-agent-laith.streamlit.app/
+- **Project page** with interactive transcript demos: https://laithaskar.github.io/ai-trading-agent/
 
 ## What's in the box
 
