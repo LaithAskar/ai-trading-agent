@@ -14,7 +14,7 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent.
-- **20 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
+- **25 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
 
 ## Setup
 
@@ -126,4 +126,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-20 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
+25 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
