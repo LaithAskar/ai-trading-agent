@@ -160,6 +160,40 @@ def _get_run_details(args: dict) -> dict:
     }
 
 
+def _get_news_sentiment_tool(args: dict) -> dict:
+    from ..data.news_source import get_daily_sentiment
+
+    rows = get_daily_sentiment(
+        ticker=args["ticker"],
+        start=args["start"],
+        end=args["end"],
+    )
+    if not rows:
+        return {
+            "ticker": args["ticker"].upper(),
+            "start": args["start"],
+            "end": args["end"],
+            "count": 0,
+            "summary": "no news data available in this window",
+        }
+    sentiments = [r.avg_sentiment for r in rows]
+    total_articles = sum(r.num_articles for r in rows)
+    return {
+        "ticker": args["ticker"].upper(),
+        "start": args["start"],
+        "end": args["end"],
+        "count": len(rows),
+        "total_articles": total_articles,
+        "mean_sentiment": sum(sentiments) / len(sentiments),
+        "min_sentiment": min(sentiments),
+        "max_sentiment": max(sentiments),
+        "daily_series": [
+            {"date": r.date, "avg_sentiment": r.avg_sentiment, "num_articles": r.num_articles}
+            for r in rows
+        ],
+    }
+
+
 def _list_filings_tool(args: dict) -> dict:
     from ..data.edgar_source import list_filings
 
@@ -386,6 +420,28 @@ FETCH_FILING = Tool(
 )
 
 
+GET_NEWS_SENTIMENT = Tool(
+    name="get_news_sentiment",
+    description=(
+        "Fetch daily-aggregated news sentiment for a ticker over a date range. "
+        "Sentiment is ticker-specific (each article's sentiment score for THIS "
+        "ticker, not overall article tone), averaged per day. Range [-1, 1]. "
+        "Data from AlphaVantage NEWS_SENTIMENT; cached locally so re-runs are "
+        "free. Returns the full daily series plus mean / min / max."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "Stock ticker, e.g. 'AAPL'"},
+            "start": {"type": "string", "description": "Start date YYYY-MM-DD"},
+            "end": {"type": "string", "description": "End date YYYY-MM-DD"},
+        },
+        "required": ["ticker", "start", "end"],
+    },
+    fn=_get_news_sentiment_tool,
+)
+
+
 ALL_TOOLS: list[Tool] = [
     LIST_STRATEGIES,
     READ_STRATEGY_CODE,
@@ -395,6 +451,7 @@ ALL_TOOLS: list[Tool] = [
     COMPARE_RUNS,
     LIST_FILINGS,
     FETCH_FILING,
+    GET_NEWS_SENTIMENT,
 ]
 
 

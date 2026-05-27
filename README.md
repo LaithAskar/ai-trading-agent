@@ -6,6 +6,8 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 - **Web app** (run the agent, backtest, paper trade — all in your browser): https://ai-trading-agent-laith.streamlit.app/
 - **Project page** with interactive transcript demos: https://laithaskar.github.io/ai-trading-agent/
 
+**Latest** (V8): NexusTrade MCP integration via OAuth (55 remote tools merged into the agent), news-sentiment strategy via AlphaVantage NEWS_SENTIMENT.
+
 ## What's in the box
 
 - **Backtest engine** with a pinned lookahead-safety contract (orders at bar `t` fill at bar `t+1`'s open), configurable slippage (default 5 bps) and commission (default $0).
@@ -18,7 +20,7 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **78 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
+- **91 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
 
 ## Setup
 
@@ -147,6 +149,22 @@ python -m trading_agent walk-forward --strategy sma_cross --symbol AAPL --start 
 
 Runs the strategy on rolling train→test splits and reports OOS CAGR per split plus the mean+stdev across splits. Most strategies that look great on a single backtest fall apart here — that's the point.
 
+## News sentiment (V8b)
+
+A second LLM-text-driven signal alongside the SEC-filings strategy: daily news sentiment per ticker via AlphaVantage's `NEWS_SENTIMENT` endpoint.
+
+```powershell
+# Free key at https://www.alphavantage.co/support/#api-key (no card required)
+# Add it to .env as ALPHAVANTAGE_API_KEY=...
+python -m trading_agent backtest --strategy news_sentiment --symbol AAPL --start 2024-01-01 --end 2025-12-31
+```
+
+Signal: long when an N-day rolling mean of ticker-specific sentiment is above `enter_threshold`, flat when it drops below `exit_threshold`. Hysteresis band prevents whipsaw on small noise. Default params: `window=5, enter_threshold=0.15, exit_threshold=0.05`.
+
+The agent also has a `get_news_sentiment(ticker, start, end)` tool — useful for ad-hoc "what's the sentiment around X?" questions. Results cached locally in `data/news_cache.sqlite3` so re-runs cost zero API calls.
+
+Free tier limit: 500 AlphaVantage calls/day, 5/min. Cache fixes this for backtests; only the first run hits the API.
+
 ## Remote MCP servers (V4)
 
 The agent can also use tools from any remote Model Context Protocol server — NexusTrade, GitHub, anything that speaks MCP over HTTP with OAuth. The flow:
@@ -238,4 +256,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-78 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
+91 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
