@@ -18,6 +18,7 @@ data/cache/
 data/results/
 data/logs/
 data/strategies/
+data/mcp/
 
 *.sqlite3
 *.key
