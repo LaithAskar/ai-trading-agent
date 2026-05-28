@@ -45,13 +45,21 @@ class NewsSentiment(Strategy):
         self._scored_dates: dict[datetime.date, float] = {}
 
     def on_start(self, symbols: list[str]) -> None:
+        from datetime import date, timedelta
+
         from trading_agent.data.news_source import get_daily_sentiment
 
         symbol = symbols[0]
-        # Pull a generous window — AV's free tier returns up to ~1000 articles
-        # per call so we fetch the entire feed available, cache builds first time.
+        # AV's free tier caps at 1000 articles per call. For most tickers
+        # that covers roughly the last 18-24 months. Fetching a wider window
+        # would hit the cap and return only the OLDEST 1000 (useless for
+        # backtests of recent windows). So we pin to "recent past" relative
+        # to wall-clock today.
+        today = date.today()
+        fetch_start = (today - timedelta(days=600)).strftime("%Y-%m-%d")
+        fetch_end = (today + timedelta(days=1)).strftime("%Y-%m-%d")
         try:
-            rows = get_daily_sentiment(symbol, "2022-01-01", "2030-12-31")
+            rows = get_daily_sentiment(symbol, fetch_start, fetch_end)
         except Exception:
             # Offline / no API key / rate limited: stay flat for the run.
             return

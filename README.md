@@ -163,7 +163,9 @@ Signal: long when an N-day rolling mean of ticker-specific sentiment is above `e
 
 The agent also has a `get_news_sentiment(ticker, start, end)` tool — useful for ad-hoc "what's the sentiment around X?" questions. Results cached locally in `data/news_cache.sqlite3` so re-runs cost zero API calls.
 
-Free tier limit: 500 AlphaVantage calls/day, 5/min. Cache fixes this for backtests; only the first run hits the API.
+Free tier limit: 500 AlphaVantage calls/day, 5/min. Cache fixes the call-rate problem for repeated runs.
+
+**Honest caveat on the free tier**: in practice AV's free `NEWS_SENTIMENT` endpoint returns roughly the last 30 days of articles per ticker, regardless of the requested `time_from`. A meaningful multi-year historical backtest of this strategy needs a paid AV tier (or a different news source like Polygon / Tiingo). The strategy works end-to-end on the data we have — a sanity-check backtest on AAPL May 5–27 2026 generated 1 fill and a 5.33% return — but the data depth is the constraint, not the code.
 
 ## Remote MCP servers (V4)
 

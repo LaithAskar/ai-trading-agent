@@ -71,7 +71,7 @@ def _fetch_av_news(ticker: str, time_from: str, time_to: str, api_key: str) -> l
             "time_from": time_from,
             "time_to": time_to,
             "limit": 1000,
-            "sort": "EARLIEST",
+            "sort": "LATEST",
             "apikey": api_key,
         },
         timeout=30,
