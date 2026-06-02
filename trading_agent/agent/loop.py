@@ -345,7 +345,9 @@ def run_agent(
 def _persist_session(session: AgentSession, memory: Memory) -> None:
     log_path = AGENT_LOGS_DIR / f"{session.session_id}.json"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(session.to_dict(), indent=2, default=str))
+    log_path.write_text(
+        json.dumps(session.to_dict(), indent=2, default=str), encoding="utf-8"
+    )
     memory.record_session(
         session_id=session.session_id,
         goal=session.goal,
