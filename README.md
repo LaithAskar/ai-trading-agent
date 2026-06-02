@@ -6,7 +6,47 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 - **Web app** (run the agent, backtest, paper trade — all in your browser): https://ai-trading-agent-laith.streamlit.app/
 - **Project page** with interactive transcript demos: https://laithaskar.github.io/ai-trading-agent/
 
-**Latest** (V8): NexusTrade MCP integration via OAuth (55 remote tools merged into the agent), news-sentiment strategy via AlphaVantage NEWS_SENTIMENT.
+**Latest** (V8c): OpenRouter OAuth sign-in for the web app — authorize once instead of pasting a raw API key. Plus NexusTrade MCP integration (55 remote tools merged into the agent) and a news-sentiment strategy via AlphaVantage NEWS_SENTIMENT.
+
+## Run the agent yourself
+
+Two ways, depending on whether you want to install anything.
+
+### Option 1 — Hosted web app (nothing to install)
+
+1. Open **https://ai-trading-agent-laith.streamlit.app/**
+2. In the sidebar, click **Sign in with OpenRouter** and authorize. No raw API key to paste — the agent runs on *your* OpenRouter credits. (Prefer Anthropic directly? Use the **Advanced** expander to paste an `ANTHROPIC_API_KEY` instead.)
+3. Open the **Run Agent** page, type a goal, and watch the **Thought → Action → Observation** panels stream back.
+
+### Option 2 — Clone and run it locally
+
+You need Python 3.11+ and an **Anthropic API key** ([console.anthropic.com](https://console.anthropic.com)). The local CLI uses Anthropic directly; OpenRouter sign-in is a web-app-only convenience.
+
+```powershell
+git clone https://github.com/LaithAskar/ai-trading-agent.git
+cd ai-trading-agent
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1            # macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+
+copy .env.example .env                # macOS/Linux: cp .env.example .env
+# then edit .env and set: ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Run the agent on a natural-language goal:
+
+```powershell
+python -m trading_agent agent --goal "Backtest sma_cross on AAPL from 2022 to 2024 with three parameter combinations. Tell me which performed best by Sharpe and why I should be skeptical."
+```
+
+Or launch the web app locally instead of the CLI:
+
+```powershell
+streamlit run streamlit_app.py
+```
+
+That's the whole setup. Detailed flags and every other command are documented below.
 
 ## What's in the box
 
@@ -20,17 +60,7 @@ A backtest + AI research agent for stock trading strategies. Built ground-up —
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **91 tests** including lookahead-safety regression tests, slippage/commission correctness, and a mock-driven loop test.
-
-## Setup
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
-# then edit .env and add ANTHROPIC_API_KEY=sk-ant-...
-```
+- **103 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, and a mock-driven loop test.
 
 ## Run a backtest (no LLM)
 
@@ -60,7 +90,7 @@ The agent emits visible **Thought → Action → Observation** panels as it runs
 
 Rendered interactive transcripts — open in a browser, press **▶ Play** (or **Space**, or **→**) to step through the agent's reasoning iteration by iteration:
 - [`docs/examples/v8-nexustrade-mcp-session.html`](docs/examples/v8-nexustrade-mcp-session.html) — **V8 demo**. Agent merges our local 8 tools with **55 tools from the live NexusTrade MCP server** (over OAuth), fetches Aurora's actual production planner system prompt, lists the user's NexusTrade portfolios, and pulls real Polygon fundamentals for AAPL's peer group. Closes with a tool-surface comparison: ours is a focused research sandbox, Aurora is a full-stack autonomous trading platform. 4 iterations, $0.4764.
-- [`docs/examples/v6-flagship-session.html`](docs/examples/v6-flagship-session.html) — V6 demo. Agent compares two AAPL strategies, finds prior backtests via memory (skips redundant work), pulls Apple's current Q2 FY2026 10-Q via EDGAR, writes a regime analysis tying the filing's buyback / R&D / services data back to which strategy's regime is likely to persist. 7 iterations, $0.0845, all 8 local tools exercised.
+- [`docs/examples/v6-flagship-session.html`](docs/examples/v6-flagship-session.html) — V6 demo. Agent compares two AAPL strategies, finds prior backtests via memory (skips redundant work), pulls Apple's current Q2 FY2026 10-Q via EDGAR, writes a regime analysis tying the filing's buyback / R&D / services data back to which strategy's regime is likely to persist. 4 agent iterations (7 tool calls), $0.0845, all 8 local tools exercised.
 - [`docs/examples/sample-session.html`](docs/examples/sample-session.html) — earlier demo, same interactive viewer.
 
 ## Observability and safety (V3)
@@ -258,4 +288,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-91 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, and the loop driver (mocked).
+103 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, OpenRouter provider routing + OAuth code exchange, and the loop driver (mocked).
