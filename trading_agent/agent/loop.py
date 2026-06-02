@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -20,6 +21,37 @@ from .pricing import estimate_cost
 from .prompts import SYSTEM_PROMPT
 from .tools import build_tool_registry
 
+
+def _reconfigure_utf8(stream) -> bool:
+    """Switch a text stream to UTF-8 with errors='replace'. Returns True if applied.
+
+    Guarded: streams that don't expose reconfigure (some captured/redirected
+    stdouts) are left untouched rather than crashing.
+    """
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return False
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def force_utf8_stdio() -> None:
+    """Make stdout/stderr tolerate non-ASCII before any rich output.
+
+    The agent prints model responses (which routinely contain emoji like the
+    check mark, the approximation sign, em-dashes, arrows) to the terminal via
+    rich. On Windows the default console codec is cp1252, which raises
+    UnicodeEncodeError on those characters and kills the whole run. Forcing UTF-8
+    fixes both the CLI and the headless Streamlit subprocess for everyone.
+    """
+    _reconfigure_utf8(sys.stdout)
+    _reconfigure_utf8(sys.stderr)
+
+
+force_utf8_stdio()
 console = Console()
 
 

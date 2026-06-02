@@ -116,6 +116,18 @@ def _run_backtest_tool(args: dict) -> dict:
         "slippage_bps": run.slippage_bps,
         "commission_per_trade": run.commission_per_trade,
         "metrics": dict(run.metrics.as_table()),
+        "buy_and_hold": (
+            {
+                "total_return_pct": run.benchmark.total_return_pct,
+                "cagr_pct": run.benchmark.cagr_pct,
+                "sharpe": run.benchmark.sharpe,
+                "max_drawdown_pct": run.benchmark.max_drawdown_pct,
+            }
+            if run.benchmark is not None
+            else None
+        ),
+        "sharpe_t_stat": run.sharpe_t_stat,
+        "sharpe_p_value": run.sharpe_p_value,
     }
 
 
@@ -279,9 +291,11 @@ RUN_BACKTEST = Tool(
     name="run_backtest",
     description=(
         "Run a historical backtest of a strategy on one symbol. Returns metrics "
-        "(Sharpe, CAGR, max drawdown, win rate, etc.) and a run_id that can be "
-        "passed to get_run_details or compare_runs. Order-of-operations: orders "
-        "submitted at bar t fill at bar t+1's OPEN (no lookahead bias). "
+        "(Sharpe, CAGR, max drawdown, win rate, etc.), the buy_and_hold benchmark "
+        "for the SAME symbol and window (so you never need to fabricate one), the "
+        "Sharpe significance (sharpe_t_stat, sharpe_p_value vs. the null Sharpe=0), "
+        "and a run_id for get_run_details or compare_runs. Order-of-operations: "
+        "orders submitted at bar t fill at bar t+1's OPEN (no lookahead bias). "
         "Defaults: 5 bps slippage on each fill, 0 commission. These are "
         "configurable and the values used are returned with the result."
     ),
