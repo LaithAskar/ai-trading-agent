@@ -18,7 +18,10 @@ from urllib.parse import urlencode
 
 import httpx
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Host root only, NOT ".../api/v1": the Anthropic SDK appends "/v1/messages"
+# itself, so a base_url ending in /v1 would produce a double /v1 and 404.
+# Matches OpenRouter's own Claude Code integration (ANTHROPIC_BASE_URL).
+OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 OPENROUTER_AUTH_URL = "https://openrouter.ai/auth"
 OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/auth/keys"
 

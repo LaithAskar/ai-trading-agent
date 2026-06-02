@@ -60,7 +60,7 @@ That's the whole setup. Detailed flags and every other command are documented be
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **103 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, and a mock-driven loop test.
+- **104 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, and a mock-driven loop test.
 
 ## Run a backtest (no LLM)
 
@@ -288,4 +288,4 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 pytest
 ```
 
-103 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, OpenRouter provider routing + OAuth code exchange, and the loop driver (mocked).
+104 tests covering: lookahead safety, slippage + commission application, portfolio bookkeeping, memory persistence, tool schemas + path-traversal blocking, OpenRouter provider routing + OAuth code exchange, and the loop driver (mocked).

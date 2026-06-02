@@ -61,6 +61,16 @@ def test_client_kwargs_openrouter_requires_key():
         client_kwargs(None, "openrouter")
 
 
+def test_openrouter_base_url_does_not_double_v1():
+    # The Anthropic SDK appends "/v1/messages" to base_url. If OPENROUTER_BASE_URL
+    # itself ended in /v1, live calls would hit ".../api/v1/v1/messages" -> 404.
+    # This guards the real wire path that the mocked-client tests cannot exercise.
+    assert not OPENROUTER_BASE_URL.rstrip("/").endswith("/v1")
+    assert OPENROUTER_BASE_URL.rstrip("/") + "/v1/messages" == (
+        "https://openrouter.ai/api/v1/messages"
+    )
+
+
 # ---------- auth URL ----------
 
 def test_build_auth_url_encodes_callback():
