@@ -75,7 +75,10 @@ def _panel_html(kind: str, label: str, body: str, duration_ms=None) -> str:
     if duration_ms is not None:
         chip = f"<span style='background:#ececef;color:#6e6e73;font-size:11px;padding:1px 7px;border-radius:999px;margin-left:8px;font-weight:500'>{duration_ms} ms</span>"
     import html as _html
-    safe_body = _html.escape(body)
+    # HTML-escape, then neutralize '$' so Streamlit's markdown doesn't treat
+    # "$100K ... $350K" as a LaTeX math span and mangle it. We emit HTML here,
+    # so the &#36; entity renders as a literal '$'.
+    safe_body = _html.escape(body).replace("$", "&#36;")
     return (
         f'<div class="tagging-panel {kind}">'
         f'<div class="lbl">{label}{chip}</div>'
