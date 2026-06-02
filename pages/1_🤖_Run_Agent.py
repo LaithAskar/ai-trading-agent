@@ -5,7 +5,7 @@ import json
 
 import streamlit as st
 
-from app_shared import require_anthropic_key, setup_page
+from app_shared import require_llm, setup_page
 
 
 setup_page("Run Agent", icon="🤖")
@@ -16,7 +16,7 @@ st.caption(
     "its Thought → Action → Observation panels back to you as it works."
 )
 
-api_key = require_anthropic_key()
+api_key, provider = require_llm()
 
 with st.form("agent_form"):
     goal = st.text_area(
@@ -144,6 +144,7 @@ try:
         max_iters=int(max_iters),
         max_session_dollars=float(max_dollars),
         api_key=api_key,
+        provider=provider,
         on_iteration=on_iteration_cb,
     )
 except Exception as e:

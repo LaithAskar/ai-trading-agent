@@ -14,6 +14,7 @@ from rich.prompt import Confirm
 from rich.syntax import Syntax
 
 from ..config import AGENT_LOGS_DIR, MEMORY_DB
+from ..llm.client import client_kwargs, resolve_model
 from .memory import Memory
 from .pricing import estimate_cost
 from .prompts import SYSTEM_PROMPT
@@ -138,6 +139,7 @@ def run_agent(
     max_session_tokens: int = 200_000,
     max_session_dollars: float = 1.00,
     api_key: str | None = None,
+    provider: str = "anthropic",
     extra_tools: list | None = None,
     on_iteration=None,
 ) -> AgentSession:
@@ -166,7 +168,8 @@ def run_agent(
         registry[t.name] = t
     tool_schemas = [t.anthropic_schema() for t in registry.values()]
 
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+    client = anthropic.Anthropic(**client_kwargs(api_key, provider))
+    api_model = resolve_model(model, provider)
 
     console.rule(f"[bold]Agent session {session.session_id}[/bold]  ({mode}, {model})")
     console.print(Panel(goal, title="[bold]Goal[/bold]", border_style="white"))
@@ -183,7 +186,7 @@ def run_agent(
 
         try:
             response = client.messages.create(
-                model=model,
+                model=api_model,
                 max_tokens=max_tokens_per_call,
                 system=[
                     {

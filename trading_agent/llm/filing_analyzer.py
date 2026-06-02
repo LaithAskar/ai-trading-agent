@@ -13,6 +13,7 @@ from typing import Iterator
 import anthropic
 
 from ..config import DATA_DIR
+from .client import client_kwargs, resolve_model
 
 
 CACHE_DB = DATA_DIR / "llm_cache.sqlite3"
@@ -173,6 +174,7 @@ def analyze_filing(
     accession_no: str,
     text: str,
     api_key: str | None = None,
+    provider: str = "anthropic",
     model: str = "claude-sonnet-4-6",
     max_tokens: int = 400,
     cache_only: bool = False,
@@ -197,10 +199,10 @@ def analyze_filing(
         )
 
     if client is None:
-        client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+        client = anthropic.Anthropic(**client_kwargs(api_key, provider))
 
     response = client.messages.create(
-        model=model,
+        model=resolve_model(model, provider),
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )

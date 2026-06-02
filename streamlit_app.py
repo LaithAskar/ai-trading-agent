@@ -45,7 +45,8 @@ st.divider()
 st.markdown("### Quick start")
 st.markdown(
     """
-    1. Paste an **ANTHROPIC_API_KEY** in the sidebar (get one at console.anthropic.com).
+    1. Click **Sign in with OpenRouter** in the sidebar and authorize — no raw API
+       key to paste. (Prefer Anthropic directly? Use the **Advanced** expander.)
     2. Open the **Run Agent** page from the sidebar on the left.
     3. Type a goal, e.g.:
        > "Compare sma_cross and rsi_mean_rev on AAPL for 2022-2024 and tell me which performed better."
@@ -61,8 +62,11 @@ with st.container():
     st.markdown("### Notes")
     st.markdown(
         """
-        - **Your API key never leaves your browser session.** It's not written to
-          any file on the server.
+        - **Sign in with OpenRouter** so you never type a raw secret. The minted
+          key is scoped to your own OpenRouter account and lives in this browser
+          session only — it's not written to any file on the server. (It is held
+          in server memory for the duration of a run; this is better key hygiene,
+          not zero server-side custody.)
         - **Paper trading** requires Alpaca paper credentials (separate sidebar
           expander) and is sandboxed against the live API by design.
         - On the hosted Streamlit Cloud deployment, the file system is ephemeral —

@@ -31,6 +31,8 @@ class Config:
     alpaca_api_secret: str | None
     alpaca_paper: bool
     alphavantage_api_key: str | None
+    openrouter_api_key: str | None
+    openrouter_callback_url: str
 
     @classmethod
     def load(cls) -> "Config":
@@ -49,6 +51,10 @@ class Config:
             alpaca_api_secret=os.getenv("ALPACA_API_SECRET") or None,
             alpaca_paper=os.getenv("ALPACA_PAPER", "true").lower() == "true",
             alphavantage_api_key=os.getenv("ALPHAVANTAGE_API_KEY") or None,
+            openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
+            openrouter_callback_url=os.getenv(
+                "OPENROUTER_CALLBACK_URL", "https://ai-trading-agent-laith.streamlit.app/"
+            ),
         )
 
 
