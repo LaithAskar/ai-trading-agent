@@ -45,6 +45,11 @@ def backtest(
     param: list[str] = typer.Option(  # noqa: B008
         [], "--param", help="Strategy param key=value (repeatable)"
     ),
+    save_obsidian: bool = typer.Option(
+        False,
+        "--save-obsidian",
+        help="Also write a cautious research report to the Hermes Brain Obsidian vault.",
+    ),
 ) -> None:
     """Run a backtest and write results to data/results/."""
     Config.load()
@@ -67,27 +72,57 @@ def backtest(
     table.add_column("Strategy", justify="right")
     table.add_column("Buy & Hold", justify="right")
     bench = run.benchmark
+    if bench is None:
+        raise typer.Exit(1)
     rows = [
         ("Total return",        f"{run.metrics.total_return_pct:.2f}%",  f"{bench.total_return_pct:.2f}%"),
         ("CAGR",                f"{run.metrics.cagr_pct:.2f}%",          f"{bench.cagr_pct:.2f}%"),
         ("Sharpe (annualized)", f"{run.metrics.sharpe:.2f}",             f"{bench.sharpe:.2f}"),
+        ("Volatility",          f"{run.metrics.volatility_pct:.2f}%",    f"{bench.volatility_pct:.2f}%"),
         ("Max drawdown",        f"{run.metrics.max_drawdown_pct:.2f}%",  f"{bench.max_drawdown_pct:.2f}%"),
+        ("Exposure",            f"{run.metrics.exposure_pct:.2f}%",      f"{bench.exposure_pct:.2f}%"),
         ("Ending equity",       f"${run.metrics.ending_equity:,.2f}",    f"${bench.end_equity:,.2f}"),
         ("Fills",               str(run.metrics.num_fills),              "1"),
         ("Round trips",         str(run.metrics.num_round_trips),        "0"),
         ("Win rate",            f"{run.metrics.win_rate_pct:.2f}%",      "—"),
+        ("Profit factor",       "∞" if run.metrics.profit_factor == float("inf") else f"{run.metrics.profit_factor:.2f}", "—"),
     ]
     for r in rows:
         table.add_row(*r)
     table.add_row("Sharpe t-stat", f"{run.sharpe_t_stat:.2f}", "")
     table.add_row("Sharpe p-value", f"{run.sharpe_p_value:.4f}", "")
     console.print(table)
+
+    btable = Table(title="Additional baselines")
+    btable.add_column("Baseline")
+    btable.add_column("Total return", justify="right")
+    btable.add_column("CAGR", justify="right")
+    btable.add_column("Sharpe", justify="right")
+    btable.add_column("Max DD", justify="right")
+    btable.add_column("Exposure", justify="right")
+    for name, baseline in run.baselines.items():
+        if name == "buy_and_hold":
+            continue
+        btable.add_row(
+            name,
+            f"{baseline.total_return_pct:.2f}%",
+            f"{baseline.cagr_pct:.2f}%",
+            f"{baseline.sharpe:.2f}",
+            f"{baseline.max_drawdown_pct:.2f}%",
+            f"{baseline.exposure_pct:.2f}%",
+        )
+    console.print(btable)
     if run.sharpe_p_value >= 0.10:
         console.print(
             f"[yellow]Sharpe is not statistically distinguishable from zero "
             f"(p={run.sharpe_p_value:.3f}). Don't over-interpret.[/yellow]"
         )
     console.print(f"[green]Wrote[/green] {run.artifact_dir}")
+    if save_obsidian:
+        from .obsidian import save_backtest_report
+
+        report_path = save_backtest_report(run)
+        console.print(f"[green]Saved Obsidian report[/green] {report_path}")
 
 
 @app.command(name="paper-status")
