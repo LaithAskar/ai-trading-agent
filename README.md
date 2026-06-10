@@ -43,6 +43,14 @@ Outputs `data/results/<run>/`:
 - `equity_curve.csv` + `equity_curve.png`
 - `trades.csv` — every fill
 
+Optional Obsidian research log:
+
+```powershell
+python -m trading_agent backtest --strategy sma_cross --symbol AAPL --start 2020-01-01 --end 2024-12-31 --param fast=20 --param slow=50 --save-obsidian
+```
+
+`--save-obsidian` writes a cautious research-only Markdown report to `/Users/laithaskar/Documents/Hermes Brain/03_Trading/Backtests/`. Reports explicitly mark the run as not approved for paper trading or real trading, include benchmark comparison, and include a skepticism checklist so good-looking curves are not promoted without review.
+
 ## Run the agent
 
 ```powershell

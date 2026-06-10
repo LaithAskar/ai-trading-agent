@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 import pandas as pd
@@ -18,10 +19,13 @@ class Metrics:
     total_return_pct: float
     cagr_pct: float
     sharpe: float
+    volatility_pct: float
     max_drawdown_pct: float
+    exposure_pct: float
     num_fills: int
     num_round_trips: int
     win_rate_pct: float
+    profit_factor: float
 
     def as_table(self) -> list[tuple[str, str]]:
         return [
@@ -30,10 +34,13 @@ class Metrics:
             ("Total return", f"{self.total_return_pct:.2f}%"),
             ("CAGR", f"{self.cagr_pct:.2f}%"),
             ("Sharpe (annualized)", f"{self.sharpe:.2f}"),
+            ("Volatility (annualized)", f"{self.volatility_pct:.2f}%"),
             ("Max drawdown", f"{self.max_drawdown_pct:.2f}%"),
+            ("Exposure", f"{self.exposure_pct:.2f}%"),
             ("Fills", str(self.num_fills)),
             ("Round trips", str(self.num_round_trips)),
             ("Win rate", f"{self.win_rate_pct:.2f}%"),
+            ("Profit factor", "∞" if math.isinf(self.profit_factor) else f"{self.profit_factor:.2f}"),
         ]
 
 
@@ -70,6 +77,31 @@ def _round_trip_pnls(portfolio: Portfolio) -> list[float]:
     return pnls
 
 
+def _exposure_pct(portfolio: Portfolio, timestamps: pd.Index) -> float:
+    """Percent of equity observations with any open position.
+
+    Fills at or before each equity timestamp are applied before checking
+    exposure, matching the engine's fill -> mark -> record-equity sequence.
+    """
+    if len(timestamps) == 0:
+        return 0.0
+
+    fills = sorted(portfolio.fills, key=lambda f: f.timestamp)
+    positions: dict[str, float] = {}
+    fill_i = 0
+    exposed = 0
+    for ts in timestamps:
+        while fill_i < len(fills) and fills[fill_i].timestamp <= ts:
+            fill = fills[fill_i]
+            positions[fill.symbol] = positions.get(fill.symbol, 0.0) + fill.signed_quantity
+            if abs(positions[fill.symbol]) < 1e-9:
+                del positions[fill.symbol]
+            fill_i += 1
+        if positions:
+            exposed += 1
+    return exposed / len(timestamps) * 100.0
+
+
 def compute_metrics(portfolio: Portfolio) -> Metrics:
     eq = equity_curve_df(portfolio)
     if eq.empty or len(eq) < 2:
@@ -79,10 +111,13 @@ def compute_metrics(portfolio: Portfolio) -> Metrics:
             total_return_pct=0.0,
             cagr_pct=0.0,
             sharpe=0.0,
+            volatility_pct=0.0,
             max_drawdown_pct=0.0,
+            exposure_pct=0.0,
             num_fills=len(portfolio.fills),
             num_round_trips=0,
             win_rate_pct=0.0,
+            profit_factor=0.0,
         )
 
     starting = float(eq["equity"].iloc[0])
@@ -96,8 +131,10 @@ def compute_metrics(portfolio: Portfolio) -> Metrics:
     daily_ret = eq["equity"].pct_change().dropna()
     if daily_ret.std() > 0:
         sharpe = float(daily_ret.mean() / daily_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR))
+        volatility = float(daily_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR))
     else:
         sharpe = 0.0
+        volatility = 0.0
 
     running_max = eq["equity"].cummax()
     drawdown = (eq["equity"] / running_max) - 1.0
@@ -106,6 +143,14 @@ def compute_metrics(portfolio: Portfolio) -> Metrics:
     pnls = _round_trip_pnls(portfolio)
     wins = sum(1 for p in pnls if p > 0)
     win_rate = (wins / len(pnls) * 100) if pnls else 0.0
+    gross_profit = sum(p for p in pnls if p > 0)
+    gross_loss = abs(sum(p for p in pnls if p < 0))
+    if gross_loss > 0:
+        profit_factor = gross_profit / gross_loss
+    elif gross_profit > 0:
+        profit_factor = math.inf
+    else:
+        profit_factor = 0.0
 
     return Metrics(
         starting_equity=starting,
@@ -113,8 +158,11 @@ def compute_metrics(portfolio: Portfolio) -> Metrics:
         total_return_pct=total_return * 100,
         cagr_pct=cagr * 100,
         sharpe=sharpe,
+        volatility_pct=volatility * 100,
         max_drawdown_pct=max_dd * 100,
+        exposure_pct=_exposure_pct(portfolio, eq.index),
         num_fills=len(portfolio.fills),
         num_round_trips=len(pnls),
         win_rate_pct=win_rate,
+        profit_factor=profit_factor,
     )
