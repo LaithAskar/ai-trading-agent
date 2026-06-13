@@ -66,3 +66,20 @@ class Portfolio:
 
     def position(self, symbol: str) -> float:
         return self.positions.get(symbol, 0.0)
+
+    def max_affordable(self, price: float, buffer_pct: float = 0.01) -> int:
+        """Largest whole-share quantity buyable now, leaving a small cash buffer.
+
+        Strategies size against the bar CLOSE, but orders fill at the NEXT bar's
+        OPEN plus slippage — which can gap above the close. All-in sizing
+        (`cash // price`) leaves zero headroom, so even a fractional gap pushes
+        the notional past available cash and `fill_at` rejects the order, which
+        the engine then silently drops (the entry never happens). Reserving
+        `buffer_pct` of cash keeps the order notional safely under cash.
+        """
+        if not 0.0 <= buffer_pct < 1.0:
+            raise ValueError("buffer_pct must be in [0, 1)")
+        if price <= 0:
+            return 0
+        investable = self.cash * (1.0 - buffer_pct)
+        return int(investable // price)

@@ -120,15 +120,10 @@ class NewsEventBurst(Strategy):
                 return [Order(symbol=bar.symbol, side=Side.SELL, quantity=held)]
             return []
 
-        # Flat: enter on a positive burst.
+        # Flat: enter on a positive burst. max_affordable reserves a small cash
+        # buffer so the next-bar gap-up + slippage fill isn't silently dropped.
         if pos >= self.burst_count:
-            # Size against the close, but the order fills at the NEXT bar's open
-            # plus slippage — which can gap above the close. Reserve a small cash
-            # buffer so a modest overnight gap doesn't push the notional past our
-            # cash and cause the engine to silently drop the fill (all-in sizing
-            # leaves zero headroom).
-            investable = portfolio.cash * (1.0 - self.cash_buffer_pct)
-            qty = int(investable // bar.close)
+            qty = portfolio.max_affordable(bar.close, self.cash_buffer_pct)
             if qty > 0:
                 self._bars_in_trade = 0
                 return [Order(symbol=bar.symbol, side=Side.BUY, quantity=qty)]

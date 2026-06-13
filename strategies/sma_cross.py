@@ -43,7 +43,7 @@ class SmaCross(Strategy):
             held = portfolio.position(bar.symbol)
 
             if crossed_up and held == 0:
-                qty = int(portfolio.cash // bar.close)
+                qty = portfolio.max_affordable(bar.close)
                 if qty > 0:
                     orders.append(Order(symbol=bar.symbol, side=Side.BUY, quantity=qty))
             elif crossed_down and held > 0:

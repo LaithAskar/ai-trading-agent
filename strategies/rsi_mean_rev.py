@@ -58,7 +58,7 @@ class RsiMeanReversion(Strategy):
             crossed_into_overbought = self._prev_rsi <= self.overbought and rsi > self.overbought
 
             if crossed_into_oversold and held == 0:
-                qty = int(portfolio.cash // bar.close)
+                qty = portfolio.max_affordable(bar.close)
                 if qty > 0:
                     orders.append(Order(symbol=bar.symbol, side=Side.BUY, quantity=qty))
             elif crossed_into_overbought and held > 0:
