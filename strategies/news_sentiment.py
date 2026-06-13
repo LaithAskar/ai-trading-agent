@@ -91,7 +91,7 @@ class NewsSentiment(Strategy):
         held = portfolio.position(bar.symbol)
 
         if rolling > self.enter_threshold and held == 0:
-            qty = int(portfolio.cash // bar.close)
+            qty = portfolio.max_affordable(bar.close)
             if qty > 0:
                 return [Order(symbol=bar.symbol, side=Side.BUY, quantity=qty)]
         elif rolling < self.exit_threshold and held > 0:

@@ -53,7 +53,7 @@ def test_strategy_goes_long_on_improving_sentiment():
     orders = s.on_bar(_bar(datetime(2023, 9, 1), close=50.0), pf)
     assert len(orders) == 1
     assert orders[0].side is Side.BUY
-    assert orders[0].quantity == 2000  # 100k / 50
+    assert orders[0].quantity == 1980  # (100k * 0.99 buffer) / 50; see Portfolio.max_affordable
 
 
 def test_strategy_exits_when_sentiment_deteriorates():

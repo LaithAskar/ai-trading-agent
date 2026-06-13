@@ -93,7 +93,7 @@ class FilingsSentimentLLM(Strategy):
             return []
         held = portfolio.position(bar.symbol)
         if signal > 0 and held == 0:
-            qty = int(portfolio.cash // bar.close)
+            qty = portfolio.max_affordable(bar.close)
             if qty > 0:
                 return [Order(symbol=bar.symbol, side=Side.BUY, quantity=qty)]
         elif signal < 0 and held > 0:
