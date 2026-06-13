@@ -206,6 +206,44 @@ def _get_news_sentiment_tool(args: dict) -> dict:
     }
 
 
+def _get_news_headlines_tool(args: dict) -> dict:
+    from ..data.news_source import get_headlines
+
+    rows = get_headlines(
+        ticker=args["ticker"],
+        start=args["start"],
+        end=args["end"],
+        min_relevance=float(args.get("min_relevance", 0.0)),
+        limit=int(args["limit"]) if args.get("limit") is not None else 50,
+    )
+    if not rows:
+        return {
+            "ticker": args["ticker"].upper(),
+            "start": args["start"],
+            "end": args["end"],
+            "count": 0,
+            "summary": "no headlines available in this window",
+        }
+    return {
+        "ticker": args["ticker"].upper(),
+        "start": args["start"],
+        "end": args["end"],
+        "count": len(rows),
+        "headlines": [
+            {
+                "time_published": r.time_published,
+                "date": r.date,
+                "title": r.title,
+                "source": r.source,
+                "ticker_sentiment": r.ticker_sentiment,
+                "relevance": r.relevance,
+                "url": r.url,
+            }
+            for r in rows
+        ],
+    }
+
+
 def _list_filings_tool(args: dict) -> dict:
     from ..data.edgar_source import list_filings
 
@@ -456,6 +494,42 @@ GET_NEWS_SENTIMENT = Tool(
 )
 
 
+GET_NEWS_HEADLINES = Tool(
+    name="get_news_headlines",
+    description=(
+        "Fetch the actual news HEADLINES for a ticker over a date range — the "
+        "raw articles behind the get_news_sentiment scores. Each item has the "
+        "title, source, publish timestamp, this ticker's sentiment score "
+        "([-1, 1]) and relevance ([0, 1]), and the url. Use this to read WHY "
+        "sentiment moved and to form testable strategy hypotheses (e.g. an "
+        "earnings-beat cluster, an M&A rumor). Filter noise with min_relevance. "
+        "Data from AlphaVantage NEWS_SENTIMENT; cached locally so re-runs are free."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "Stock ticker, e.g. 'AAPL'"},
+            "start": {"type": "string", "description": "Start date YYYY-MM-DD"},
+            "end": {"type": "string", "description": "End date YYYY-MM-DD"},
+            "min_relevance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Drop articles whose per-ticker relevance is below this (default 0).",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "description": "Max headlines to return (default 50).",
+            },
+        },
+        "required": ["ticker", "start", "end"],
+    },
+    fn=_get_news_headlines_tool,
+)
+
+
 ALL_TOOLS: list[Tool] = [
     LIST_STRATEGIES,
     READ_STRATEGY_CODE,
@@ -466,6 +540,7 @@ ALL_TOOLS: list[Tool] = [
     LIST_FILINGS,
     FETCH_FILING,
     GET_NEWS_SENTIMENT,
+    GET_NEWS_HEADLINES,
 ]
 
 
