@@ -101,9 +101,21 @@ class AlpacaPaperBroker:
             for o in self._client.get_orders(filter=req)
         ]
 
+    def get_order_by_client_order_id(self, client_order_id: str) -> AlpacaOrder | None:
+        """Return a paper order by deterministic client ID, or None if absent."""
+        try:
+            response = self._client.get_order_by_client_id(client_order_id)
+        except Exception as exc:
+            if getattr(exc, "status_code", None) == 404:
+                return None
+            raise
+        return self._map_order(response)
+
     # ---- writes ----
 
-    def submit_market_order(self, order: Order) -> AlpacaOrder:
+    def submit_market_order(
+        self, order: Order, *, client_order_id: str | None = None
+    ) -> AlpacaOrder:
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.trading.requests import MarketOrderRequest
 
@@ -113,16 +125,23 @@ class AlpacaPaperBroker:
             qty=order.quantity,
             side=side,
             time_in_force=TimeInForce.DAY,
+            client_order_id=client_order_id,
         )
         resp = self._client.submit_order(req)
+        return self._map_order(resp)
+
+    @staticmethod
+    def _map_order(response) -> AlpacaOrder:
         return AlpacaOrder(
-            order_id=str(resp.id),
-            symbol=str(resp.symbol),
-            side=str(resp.side).split(".")[-1],
-            quantity=float(resp.qty),
-            status=str(resp.status).split(".")[-1],
-            filled_avg_price=float(resp.filled_avg_price) if resp.filled_avg_price else None,
-            submitted_at=str(resp.submitted_at),
+            order_id=str(response.id),
+            symbol=str(response.symbol),
+            side=str(response.side).split(".")[-1],
+            quantity=float(response.qty),
+            status=str(response.status).split(".")[-1],
+            filled_avg_price=(
+                float(response.filled_avg_price) if response.filled_avg_price else None
+            ),
+            submitted_at=str(response.submitted_at),
         )
 
     def cancel_order(self, order_id: str) -> None:
