@@ -306,7 +306,7 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 
 **Why these decisions, in plain English:**
 
-- **No LLM-in-the-strategy.** The agent uses an LLM to *orchestrate* (decide what to backtest, what to compare, how to summarize). The strategies themselves are deterministic Python. This is a deliberate choice: an LLM that emits buy/sell decisions on the fly is unauditable, expensive, and non-reproducible. The orchestrator pattern (LLM as planner over deterministic tools) is what production agents like Cursor and Claude Code actually use.
+- **No LLM-in-the-strategy.** The agent uses an LLM to *orchestrate* (decide what to backtest, what to compare, how to summarize). The strategies themselves are deterministic Python. This is a deliberate choice: an LLM that emits buy/sell decisions on the fly is unauditable, expensive, and non-reproducible. The orchestrator pattern keeps planning separate from deterministic execution.
 - **Structured SQLite memory, not vector search.** Run history has well-defined fields (symbol, strategy, sharpe, dates). Filtering by `sharpe > X` is more useful than semantic similarity. Vector retrieval gets relevant when we store free-form analysis notes — not yet.
 - **Hand-written ReAct loop, no LangChain.** Frameworks abstract away exactly the parts of an agent's behavior you most need to inspect and control. Building from scratch keeps the loop visible to the developer and the user.
 - **Strategy generation deferred to V3.** Letting the LLM write Python that then runs is the showy demo. It's also the safety risk: arbitrary code execution, AST whitelisting, sandboxing — non-trivial. Doing it after the platform is solid is the right order.
