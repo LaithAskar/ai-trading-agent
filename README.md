@@ -1,9 +1,11 @@
 # Trading Agent
 
-A backtest + AI research agent for stock trading strategies. Built ground-up — no LangChain, no agent frameworks. Direct Anthropic SDK with a hand-written ReAct loop.
+A research-first backtest + AI agent for stock-strategy experiments. Built ground-up — no LangChain, no agent frameworks. Direct Anthropic SDK with a hand-written ReAct loop.
+
+This is a portfolio/recruiter demo of agent orchestration, backtest engineering, and safety controls. It is **not investment advice**, not a signal service, and not evidence of market-beating performance.
 
 **🟢 Try it live**:
-- **Web app** (run the agent, backtest, paper trade — all in your browser): https://ai-trading-agent-laith.streamlit.app/
+- **Web app** (run research-mode agent sessions and backtests in your browser): https://ai-trading-agent-laith.streamlit.app/
 - **Project page** with interactive transcript demos: https://laithaskar.github.io/ai-trading-agent/
 
 **Latest** (V8c): OpenRouter OAuth sign-in for the web app — authorize once instead of pasting a raw API key. Plus NexusTrade MCP integration (55 remote tools merged into the agent) and a news-sentiment strategy via AlphaVantage NEWS_SENTIMENT.
@@ -60,7 +62,25 @@ That's the whole setup. Detailed flags and every other command are documented be
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **104 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, and a mock-driven loop test.
+- **150 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, and autonomous experiment tests.
+
+## Recruiter-friendly demo path
+
+If you have five minutes and do not want to wire up API keys:
+
+1. Open the web app and go straight to **Backtest**. This path does not need an LLM key.
+2. Use the sample input: `sma_cross`, `AAPL`, `2020-01-01` → `2024-12-31`, params `fast=20,slow=50`, slippage `5 bps`, commission `$0`.
+3. Read the result as a research artifact, not as a trading recommendation: the strategy can look good on standalone return metrics while still losing to a passive buy-and-hold benchmark.
+
+Representative local run from this repo/branch:
+
+```text
+strategy=sma_cross, symbol=AAPL, window=2020-01-01..2024-12-31, params fast=20 slow=50
+strategy return: 99.71%, CAGR: 14.86%, win rate: 71.43%, Sharpe: 0.89, Sharpe p-value: 0.0464
+benchmark framing: buy-and-hold beat the strategy over the same window, so this is a demo of measurement and skepticism rather than a claim of alpha.
+```
+
+The most important credibility signal is the tooling around the number: explicit lookahead-safety contract, slippage assumptions, buy-and-hold comparison, p-value warning, replayable artifacts, and paper-only/live-disabled broker code.
 
 ## Run a backtest (no LLM)
 

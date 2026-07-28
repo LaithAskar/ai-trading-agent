@@ -20,6 +20,8 @@ data/logs/
 data/strategies/
 data/mcp/
 data/openrouter/
+data/experiments/
+data/experiment_reports/
 
 *.sqlite3
 *.key

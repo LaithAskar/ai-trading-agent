@@ -16,6 +16,8 @@ from .backtest.runner import run_backtest as _run_backtest
 from .config import PROJECT_ROOT, Config, ensure_dirs
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+experiment_app = typer.Typer(help="Autonomous experiment contracts and risk gates.")
+app.add_typer(experiment_app, name="experiment")
 console = Console()
 
 
@@ -33,6 +35,143 @@ def _parse_params(items: list[str]) -> dict:
             except ValueError:
                 out[k] = v
     return out
+
+
+@experiment_app.command(name="create")
+def experiment_create(
+    name: str = typer.Option("hermes-graph-trading-30d", help="Experiment contract name."),
+    capital: float = typer.Option(200.0, help="Capital cap in USD."),
+    duration_days: int = typer.Option(30, help="Experiment duration."),
+    mode: str = typer.Option("paper", help="research, paper, or live."),
+    max_trade: float = typer.Option(20.0, help="Max notional per order."),
+    max_position: float = typer.Option(40.0, help="Max notional exposure per symbol."),
+    daily_loss_stop: float = typer.Option(4.0, help="Daily loss stop in USD."),
+    total_loss_stop: float = typer.Option(30.0, help="Total experiment loss stop in USD."),
+    max_trades_per_day: int | None = typer.Option(
+        None,
+        help="Optional trade count cap. Omit for strategy/risk-determined autonomy.",
+    ),
+    live_enabled: bool = typer.Option(False, help="Required for mode=live."),
+    overwrite: bool = typer.Option(False, help="Overwrite an existing contract file."),
+) -> None:
+    """Create a v0 autonomous trading experiment contract.
+
+    By default there is no daily trade-count cap; activity is governed by the
+    strategy, market conditions, and the deterministic risk gates.
+    """
+    from .experiment import ExperimentContract
+
+    ensure_dirs()
+    contract = ExperimentContract(
+        name=name,
+        capital_cap_usd=capital,
+        duration_days=duration_days,
+        mode=mode,  # type: ignore[arg-type]
+        max_trade_usd=max_trade,
+        max_position_usd=max_position,
+        daily_loss_stop_usd=daily_loss_stop,
+        total_loss_stop_usd=total_loss_stop,
+        max_trades_per_day=max_trades_per_day,
+        live_enabled=live_enabled,
+    )
+    if contract.path.exists() and not overwrite:
+        console.print(f"[red]Contract already exists:[/red] {contract.path}")
+        console.print("Re-run with --overwrite to replace it.")
+        raise typer.Exit(1)
+    path = contract.save()
+    console.print(f"[green]Wrote autonomous experiment contract[/green] {path}")
+    console.print(f"mode={contract.mode} autonomous={contract.autonomous} trade_approval_required={contract.trade_approval_required}")
+    console.print(f"max_trades_per_day={contract.max_trades_per_day if contract.max_trades_per_day is not None else 'unbounded/deterministic'}")
+
+
+@experiment_app.command(name="show")
+def experiment_show(name: str = typer.Argument(..., help="Experiment contract name.")) -> None:
+    """Print an experiment contract."""
+    import json
+    from .experiment import ExperimentContract
+
+    contract = ExperimentContract.load(name)
+    console.print(json.dumps(contract.to_dict(), indent=2, sort_keys=True))
+
+
+@experiment_app.command(name="list")
+def experiment_list() -> None:
+    """List saved experiment contracts."""
+    from .experiment import list_contracts
+
+    paths = list_contracts()
+    if not paths:
+        console.print("[dim]No experiment contracts saved yet.[/dim]")
+        return
+    table = Table(title="Experiment contracts")
+    table.add_column("Name")
+    table.add_column("Path")
+    for path in paths:
+        table.add_row(path.stem, str(path))
+    console.print(table)
+
+
+@experiment_app.command(name="run")
+def experiment_run(
+    name: str = typer.Argument(..., help="Experiment contract name."),
+    symbol: list[str] = typer.Option([], "--symbol", help="Ticker to evaluate; repeatable."),  # noqa: B008
+    strategy: list[str] = typer.Option([], "--strategy", help="Strategy module to evaluate; repeatable."),  # noqa: B008
+    lookback_days: int = typer.Option(730, help="Backtest/paper replay lookback window."),
+    execute: bool = typer.Option(False, help="Submit to Alpaca paper after contract gate. Default is dry-run."),
+) -> None:
+    """Run one autonomous daily research/trade-intent cycle.
+
+    This is autonomous at the trade-intent level: no per-trade prompt. In the
+    default dry-run mode it records proposed intents only. With --execute it
+    submits to Alpaca paper, still behind the experiment contract gate.
+    """
+    from .autonomous import run_autonomous_daily
+    from .broker.alpaca import AlpacaPaperBroker
+    from .experiment import ExperimentContract
+
+    cfg = Config.load()
+    ensure_dirs()
+    contract = ExperimentContract.load(name)
+    broker = None
+    if execute:
+        if contract.mode != "paper":
+            console.print("[red]v0 --execute only supports paper contracts.[/red]")
+            raise typer.Exit(1)
+        if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
+            console.print("[red]ALPACA_API_KEY / ALPACA_API_SECRET required for --execute.[/red]")
+            raise typer.Exit(1)
+        broker = AlpacaPaperBroker(cfg.alpaca_api_key, cfg.alpaca_api_secret)
+
+    result = run_autonomous_daily(
+        contract=contract,
+        symbols=symbol or None,
+        strategies=strategy or None,
+        lookback_days=lookback_days,
+        execute=execute,
+        broker=broker,
+    )
+
+    console.print(f"[green]Recorded experiment run[/green] {result.run_id} status={result.status}")
+    if result.report_path:
+        console.print(f"[green]Wrote daily report[/green] {result.report_path}")
+    if result.candidates:
+        ctable = Table(title="Candidate backtests")
+        ctable.add_column("Strategy")
+        ctable.add_column("Symbol")
+        ctable.add_column("Score", justify="right")
+        ctable.add_column("Sharpe", justify="right")
+        ctable.add_column("CAGR", justify="right")
+        ctable.add_column("Verdict")
+        for c in sorted(result.candidates, key=lambda row: row.score, reverse=True)[:10]:
+            ctable.add_row(c.strategy, c.symbol, f"{c.score:.3f}", f"{c.sharpe:.2f}", f"{c.cagr_pct:.2f}%", c.verdict)
+        console.print(ctable)
+    if result.paper_tick is not None:
+        console.print(
+            f"[bold]Selected:[/bold] {result.selected_strategy} {result.selected_symbol} | "
+            f"orders={len(result.paper_tick.proposed_orders)} dry_run={result.paper_tick.dry_run}"
+        )
+        if result.paper_tick.skipped_reason:
+            console.print(f"[yellow]{result.paper_tick.skipped_reason}[/yellow]")
 
 
 @app.command()
@@ -177,6 +316,7 @@ def paper_trade(
     lookback_days: int = typer.Option(365, help="History days needed to replay strategy state"),
     param: list[str] = typer.Option([], "--param"),  # noqa: B008
     dry_run: bool = typer.Option(True, help="If true, show proposed orders without submitting"),
+    experiment: str | None = typer.Option(None, help="Optional autonomous experiment contract name for risk gating."),
 ) -> None:
     """Run one tick of the strategy against current market data and (optionally)
     submit any proposed orders to Alpaca paper.
@@ -192,6 +332,10 @@ def paper_trade(
     params = _parse_params(param)
 
     broker = None
+    contract = None
+    if experiment:
+        from .experiment import ExperimentContract
+        contract = ExperimentContract.load(experiment)
     if not dry_run:
         if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
             console.print("[red]ALPACA_API_KEY / ALPACA_API_SECRET required when --no-dry-run.[/red]")
@@ -205,6 +349,7 @@ def paper_trade(
         lookback_days=lookback_days,
         broker=broker,
         dry_run=dry_run,
+        contract=contract,
     )
 
     console.print(f"[bold]Strategy:[/bold] {result.strategy}  [bold]Symbol:[/bold] {result.symbol}  [bold]Bars replayed:[/bold] {result.bars_seen}")
@@ -225,6 +370,12 @@ def paper_trade(
         for o in result.submitted:
             stable.add_row(o.order_id[:8] + "...", o.symbol, o.status)
         console.print(stable)
+    if result.rejected_orders:
+        rtable = Table(title="Rejected by experiment contract")
+        rtable.add_column("Reason")
+        for reason in result.rejected_orders:
+            rtable.add_row(reason)
+        console.print(rtable)
     if result.skipped_reason:
         console.print(f"[yellow]{result.skipped_reason}[/yellow]")
 
