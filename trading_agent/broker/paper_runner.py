@@ -431,6 +431,7 @@ def paper_tick(
                         broker_order_id=reconciled.order_id,
                         response=asdict(reconciled),
                         intent_status="reconciled_submission",
+                        origin_run_id=claim.run_id,
                     )
                 except Exception as checkpoint_error:
                     records.append(

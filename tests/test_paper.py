@@ -528,6 +528,15 @@ def test_pre_submit_intent_survives_post_submit_checkpoint_failure(tmp_path):
     execution = ExperimentGraph(db_path).successful_execution(reconciled_client_id)
     assert execution is not None
     assert execution["broker_order_id"] == "broker-accepted"
+    with sqlite3.connect(db_path) as connection:
+        intent_rows = connection.execute(
+            "SELECT run_id, status, order_id FROM trade_intents ORDER BY run_id"
+        ).fetchall()
+    assert {row[1] for row in intent_rows} == {"submitted", "reconciled_submission"}
+    assert {row[2] for row in intent_rows} == {"broker-accepted"}
+    assert next(row for row in intent_rows if row[0] == "reconciliation-run")[1] == (
+        "reconciled_submission"
+    )
 
 
 @pytest.mark.parametrize("field", ["cash", "portfolio_value", "buying_power", "daily_pnl"])
