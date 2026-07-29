@@ -8,6 +8,7 @@ We don't hit Alpaca's API. We verify:
 """
 from __future__ import annotations
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -69,6 +70,38 @@ def test_submit_market_order_passes_buy_to_alpaca():
     from alpaca.trading.enums import OrderSide
     assert submitted_request.side == OrderSide.BUY
     assert submitted_request.qty == 5
+
+
+@pytest.mark.parametrize("malformed", ["false", "true", 1, object(), None])
+def test_market_session_fails_closed_on_non_boolean_open_state(malformed):
+    raw_clock = MagicMock(timestamp=datetime.now().astimezone(), is_open=malformed)
+    mock_client = MagicMock()
+    mock_client.get_clock.return_value = raw_clock
+    mock_client.get_calendar.return_value = []
+
+    with patch("alpaca.trading.client.TradingClient", return_value=mock_client):
+        from trading_agent.broker.alpaca import AlpacaPaperBroker
+
+        session = AlpacaPaperBroker("key", "secret").market_session()
+
+    assert session.is_open is False
+
+
+def test_client_order_identity_includes_params_and_closed_bar_timestamp():
+    from trading_agent.broker.paper_runner import _client_order_id
+    from trading_agent.experiment import ExperimentContract
+
+    contract = ExperimentContract(name="identity-test")
+    order = Order("AAPL", Side.BUY, 1)
+    baseline = _client_order_id(contract, "sma_cross", {"fast": 5}, order, "2026-07-28T20:00:00+00:00", 0)
+    changed_params = _client_order_id(
+        contract, "sma_cross", {"fast": 10}, order, "2026-07-28T20:00:00+00:00", 0
+    )
+    changed_bar = _client_order_id(
+        contract, "sma_cross", {"fast": 5}, order, "2026-07-28T21:00:00+00:00", 0
+    )
+
+    assert len({baseline, changed_params, changed_bar}) == 3
 
 
 def test_paper_tick_dry_run_does_not_call_broker(tmp_path, monkeypatch):
@@ -172,7 +205,7 @@ def test_paper_tick_applies_experiment_contract_gate(tmp_path, monkeypatch):
     fake_broker.positions.return_value = []
     fake_broker.trades_today.return_value = 0
     fake_broker.asset_class.return_value = "US_EQUITY"
-    now = datetime.now().astimezone()
+    now = datetime.now().astimezone() + timedelta(minutes=1)
     fake_broker.market_session.return_value = MarketSessionSnapshot(
         True, now, now - timedelta(hours=2), now + timedelta(hours=2)
     )
@@ -224,7 +257,7 @@ def test_paper_tick_is_retry_idempotent_and_durably_tracks_broker_success(tmp_pa
     fake_broker.positions.return_value = []
     fake_broker.trades_today.return_value = 0
     fake_broker.asset_class.return_value = "US_EQUITY"
-    now = datetime.now().astimezone()
+    now = datetime.now().astimezone() + timedelta(minutes=1)
     fake_broker.market_session.return_value = MarketSessionSnapshot(
         True, now, now - timedelta(hours=2), now + timedelta(hours=2)
     )
@@ -341,7 +374,7 @@ def test_paper_tick_records_ambiguous_submission_outcome(tmp_path):
     fake_broker.positions.return_value = []
     fake_broker.trades_today.return_value = 0
     fake_broker.asset_class.return_value = "US_EQUITY"
-    now = datetime.now().astimezone()
+    now = datetime.now().astimezone() + timedelta(minutes=1)
     fake_broker.market_session.return_value = MarketSessionSnapshot(
         True, now, now - timedelta(hours=2), now + timedelta(hours=2)
     )
@@ -378,6 +411,65 @@ def test_paper_tick_records_ambiguous_submission_outcome(tmp_path):
     assert record.status == "submission_ambiguous"
     assert record.client_order_id
     assert record.decision.allowed is True
+
+
+def test_pre_submit_intent_survives_post_submit_checkpoint_failure(tmp_path):
+    from trading_agent.broker.alpaca import AccountSnapshot, AlpacaOrder, MarketSessionSnapshot
+    from trading_agent.broker.paper_runner import paper_tick
+    from trading_agent.experiment import ExperimentContract
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    db_path = tmp_path / "graph.sqlite3"
+
+    class BrokenSuccessGraph(ExperimentGraph):
+        def record_execution_success(self, **kwargs):
+            raise OSError("simulated disk failure")
+
+    graph = BrokenSuccessGraph(db_path)
+    broker = MagicMock()
+    broker.account.return_value = AccountSnapshot(200, 200, 200, True, daily_pnl=0.0)
+    broker.positions.return_value = []
+    broker.trades_today.return_value = 0
+    broker.asset_class.return_value = "US_EQUITY"
+    now = datetime.now().astimezone() + timedelta(minutes=1)
+    broker.market_session.return_value = MarketSessionSnapshot(
+        True, now, now - timedelta(hours=2), now + timedelta(hours=2)
+    )
+    broker.submit_market_order.return_value = AlpacaOrder(
+        "broker-accepted", "AAPL", "BUY", 1, "NEW", None, "now"
+    )
+
+    class EmitsBuy:
+        def on_start(self, symbols):
+            pass
+
+        def on_bar(self, bar, portfolio):
+            return [Order("AAPL", Side.BUY, 1)]
+
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"open": [10], "high": [10], "low": [10], "close": [10], "volume": [100]},
+        index=pd.date_range("2026-07-27", periods=1, freq="D"),
+    )
+    with patch("trading_agent.broker.paper_runner.load_bars", return_value=frame), patch(
+        "trading_agent.broker.paper_runner.load_strategy", return_value=EmitsBuy()
+    ):
+        result = paper_tick(
+            strategy_name="sma_cross",
+            symbol="AAPL",
+            broker=broker,
+            dry_run=False,
+            contract=ExperimentContract(name="checkpoint-failure-test"),
+            graph=graph,
+        )
+
+    broker.submit_market_order.assert_called_once()
+    assert result.execution_records[0].status == "post_submit_checkpoint_error"
+    assert "manual reconciliation required" in (result.skipped_reason or "")
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute("SELECT status, order_id FROM trade_intents").fetchone()
+    assert row == ("approved_pending_submission", None)
 
 
 @pytest.mark.parametrize("field", ["cash", "portfolio_value", "buying_power", "daily_pnl"])

@@ -233,6 +233,7 @@ class PublicBroker:
             OrderRequest,
             OrderSide,
             OrderType,
+            PreflightRequest,
             TimeInForce,
         )
 
@@ -257,8 +258,22 @@ class PublicBroker:
             use_margin=False,
             tax_lot_matching_instructions=None,
         )
+        preflight_request = PreflightRequest(
+            instrument=request.instrument,
+            order_side=request.order_side,
+            order_type=request.order_type,
+            expiration=request.expiration,
+            quantity=request.quantity,
+            amount=request.amount,
+            limit_price=request.limit_price,
+            stop_price=request.stop_price,
+            open_close_indicator=request.open_close_indicator,
+            equity_market_session=request.equity_market_session,
+            validate_order=True,
+            tax_lot_matching_instructions=request.tax_lot_matching_instructions,
+        )
         preflight = self._client.perform_preflight_calculation(
-            request, account_id=self.account_number
+            preflight_request, account_id=self.account_number
         )
         order_value = _finite_float(
             getattr(preflight, "order_value", None), "preflight order value"

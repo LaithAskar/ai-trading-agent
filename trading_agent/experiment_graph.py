@@ -248,7 +248,11 @@ class ExperimentGraph:
         order_id: str | None = None,
         client_order_id: str | None = None,
     ) -> str:
-        intent_id = f"intent_{uuid.uuid4().hex[:12]}"
+        intent_id = (
+            f"intent_{uuid.uuid5(uuid.NAMESPACE_URL, 'trade-intent:' + client_order_id).hex[:24]}"
+            if client_order_id
+            else f"intent_{uuid.uuid4().hex[:12]}"
+        )
         estimated_notional = order.quantity * reference_price if reference_price is not None else None
         raw = {
             "order": {"symbol": order.symbol, "side": order.side.value, "quantity": order.quantity},
@@ -264,6 +268,12 @@ class ExperimentGraph:
                  side, quantity, reference_price, estimated_notional, gate_allowed,
                  gate_reason, status, order_id, client_order_id, raw_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(intent_id) DO UPDATE SET
+                    gate_allowed = excluded.gate_allowed,
+                    gate_reason = excluded.gate_reason,
+                    status = excluded.status,
+                    order_id = excluded.order_id,
+                    raw_json = excluded.raw_json
                 """,
                 (
                     intent_id,

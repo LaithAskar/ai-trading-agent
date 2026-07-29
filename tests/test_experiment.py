@@ -12,7 +12,7 @@ from trading_agent.experiment import (
     evaluate_order_batch,
 )
 
-NOW = datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=1)
 
 
 def snapshot(
@@ -59,6 +59,43 @@ def test_contract_defaults_are_autonomous_and_trade_count_unbounded():
 def test_live_contract_requires_explicit_live_enabled():
     with pytest.raises(ValueError, match="live mode requires"):
         ExperimentContract(name="live-test", mode="live")
+
+
+def test_contract_requires_timezone_aware_creation_timestamp():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        ExperimentContract(name="bad-time", created_at="2026-07-28T12:00:00")
+
+
+@pytest.mark.parametrize(
+    ("contract", "reason"),
+    [
+        (
+            ExperimentContract(
+                name="expired",
+                created_at="2020-01-01T00:00:00+00:00",
+                duration_days=1,
+            ),
+            "experiment contract has expired",
+        ),
+        (
+            ExperimentContract(name="manual", autonomous=False),
+            "contract does not authorize autonomous execution",
+        ),
+        (
+            ExperimentContract(name="approval", trade_approval_required=True),
+            "contract requires trade approval",
+        ),
+    ],
+)
+def test_gate_enforces_contract_time_and_approval_posture(contract, reason):
+    decision = decide(
+        contract,
+        Order("AAPL", Side.BUY, 1),
+        price=10,
+        portfolio=snapshot(),
+    )
+    assert decision.allowed is False
+    assert decision.reason == reason
 
 
 @pytest.mark.parametrize("quantity", [float("nan"), float("inf"), float("-inf"), True])

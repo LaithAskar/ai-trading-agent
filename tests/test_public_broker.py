@@ -165,14 +165,16 @@ def test_enabled_order_is_cash_only_core_equity_and_preflighted_first():
         Order("aapl", Side.BUY, 1), client_order_id="ta-safe-intent"
     )
 
-    request = client.perform_preflight_calculation.call_args.args[0]
-    assert request.instrument.symbol == "AAPL"
-    assert request.instrument.type.value == "EQUITY"
-    assert request.order_side.value == "BUY"
-    assert request.order_type.value == "MARKET"
-    assert request.equity_market_session.value == "CORE"
+    preflight = client.perform_preflight_calculation.call_args.args[0]
+    request = client.place_order.call_args.args[0]
+    assert preflight.instrument.symbol == "AAPL"
+    assert preflight.instrument.type.value == "EQUITY"
+    assert preflight.order_side.value == "BUY"
+    assert preflight.order_type.value == "MARKET"
+    assert preflight.equity_market_session.value == "CORE"
+    assert preflight.validate_order is True
+    assert preflight.open_close_indicator.value == "OPEN"
     assert request.use_margin is False
-    assert request.open_close_indicator.value == "OPEN"
     assert request.order_id == _public_order_uuid("ta-safe-intent")
     assert client.method_calls[0][0] == "perform_preflight_calculation"
     assert client.method_calls[1][0] == "place_order"
@@ -187,9 +189,11 @@ def test_sell_is_explicitly_close_not_short_open():
     client.place_order.return_value = SimpleNamespace(order_id="sell-order")
     broker = _broker(client, allow_order_submission=True, max_order_notional_usd=20)
     broker.submit_market_order(Order("AAPL", Side.SELL, 1), client_order_id="ta-sell")
-    request = client.perform_preflight_calculation.call_args.args[0]
-    assert request.order_side.value == "SELL"
-    assert request.open_close_indicator.value == "CLOSE"
+    preflight = client.perform_preflight_calculation.call_args.args[0]
+    request = client.place_order.call_args.args[0]
+    assert preflight.order_side.value == "SELL"
+    assert preflight.open_close_indicator.value == "CLOSE"
+    assert preflight.validate_order is True
     assert request.use_margin is False
 
 

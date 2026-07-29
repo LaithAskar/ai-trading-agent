@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from trading_agent.autonomous import run_autonomous_daily
+from trading_agent.autonomous import _score, run_autonomous_daily
 from trading_agent.broker.paper_runner import TradeExecutionRecord
 from trading_agent.core.orders import Order, Side
 from trading_agent.experiment import ExperimentContract, GateDecision
@@ -37,6 +37,16 @@ def fake_backtest(**kwargs):
         sharpe_p_value=0.04,
         artifact_dir=Path(__file__).resolve().parents[1] / "data" / "results" / "fake",
     )
+
+
+def test_score_rejects_non_finite_evidence():
+    run = fake_backtest(strategy_name="sma_cross", symbol="AAPL", start="a", end="b")
+    run.metrics.sharpe = float("nan")
+
+    score, verdict = _score(run)  # type: ignore[arg-type]
+
+    assert verdict == "reject_invalid_metrics"
+    assert score == -1_000_000_000.0
 
 
 def test_autonomous_daily_records_candidate_and_trade_intent(tmp_path):

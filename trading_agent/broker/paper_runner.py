@@ -48,12 +48,20 @@ def _is_finite_number(value: object) -> bool:
         return False
 
 
-def _client_order_id(contract: ExperimentContract, strategy: str, order: Order, trading_day: str, index: int) -> str:
+def _client_order_id(
+    contract: ExperimentContract,
+    strategy: str,
+    params: dict,
+    order: Order,
+    closed_bar_timestamp: str,
+    index: int,
+) -> str:
     payload = json.dumps(
         {
             "experiment": contract.name,
             "strategy": strategy,
-            "day": trading_day,
+            "params": params,
+            "closed_bar_timestamp": closed_bar_timestamp,
             "index": index,
             "symbol": order.symbol.upper(),
             "side": order.side.value,
@@ -132,6 +140,7 @@ def paper_tick(
             proposed.extend(emitted)
 
     latest_price = bars[-1].close
+    closed_bar_timestamp = bars[-1].timestamp.isoformat()
     if dry_run or broker is None:
         dry_decision = GateDecision(
             False,
@@ -155,10 +164,30 @@ def paper_tick(
     if acct is None or snapshot_errors:
         reason = "contract gate requires complete broker snapshot: " + "; ".join(snapshot_errors)
         decision = GateDecision(False, reason, 0.0, 0.0, 0.0)
-        records = [
-            TradeExecutionRecord(order, latest_price, decision, "rejected_invalid_snapshot")
-            for order in proposed
-        ]
+        records = []
+        for index, order in enumerate(proposed):
+            client_order_id = _client_order_id(
+                contract, strategy_name, params, order, closed_bar_timestamp, index
+            )
+            graph.record_trade_intent(
+                run_id=run_id,
+                experiment_name=contract.name,
+                strategy=strategy_name,
+                order=order,
+                reference_price=latest_price,
+                decision=decision,
+                status="rejected_invalid_snapshot",
+                client_order_id=client_order_id,
+            )
+            records.append(
+                TradeExecutionRecord(
+                    order,
+                    latest_price,
+                    decision,
+                    "rejected_invalid_snapshot",
+                    client_order_id,
+                )
+            )
         rejected = [f"{order.symbol} {order.side.value} {order.quantity:g}: invalid broker snapshot" for order in proposed]
         return PaperTickResult(
             symbol, strategy_name, len(bars), proposed, [], False,
@@ -166,10 +195,30 @@ def paper_tick(
         )
     if acct.is_paper is not True:
         decision = GateDecision(False, "broker account is not paper", 0.0, 0.0, 0.0)
-        records = [
-            TradeExecutionRecord(order, latest_price, decision, "rejected_non_paper_account")
-            for order in proposed
-        ]
+        records = []
+        for index, order in enumerate(proposed):
+            client_order_id = _client_order_id(
+                contract, strategy_name, params, order, closed_bar_timestamp, index
+            )
+            graph.record_trade_intent(
+                run_id=run_id,
+                experiment_name=contract.name,
+                strategy=strategy_name,
+                order=order,
+                reference_price=latest_price,
+                decision=decision,
+                status="rejected_non_paper_account",
+                client_order_id=client_order_id,
+            )
+            records.append(
+                TradeExecutionRecord(
+                    order,
+                    latest_price,
+                    decision,
+                    "rejected_non_paper_account",
+                    client_order_id,
+                )
+            )
         rejected = [f"{order.symbol} {order.side.value} {order.quantity:g}: {decision.reason}" for order in proposed]
         return PaperTickResult(
             symbol,
@@ -224,13 +273,64 @@ def paper_tick(
     submitted: list[AlpacaOrder] = []
     rejected_orders: list[str] = []
     records: list[TradeExecutionRecord] = []
-    trading_day = bars[-1].timestamp.date().isoformat()
     for index, (order, decision) in enumerate(zip(proposed, decisions, strict=True)):
-        client_order_id = _client_order_id(contract, strategy_name, order, trading_day, index)
+        client_order_id = _client_order_id(
+            contract,
+            strategy_name,
+            params,
+            order,
+            closed_bar_timestamp,
+            index,
+        )
         if not decision.allowed:
             rejected_orders.append(f"{order.symbol} {order.side.value} {order.quantity:g}: {decision.reason}")
+            try:
+                graph.record_trade_intent(
+                    run_id=run_id,
+                    experiment_name=contract.name,
+                    strategy=strategy_name,
+                    order=order,
+                    reference_price=latest_price,
+                    decision=decision,
+                    status="rejected",
+                    client_order_id=client_order_id,
+                )
+            except Exception as intent_error:
+                records.append(
+                    TradeExecutionRecord(order, latest_price, decision, "checkpoint_error", client_order_id)
+                )
+                return PaperTickResult(
+                    symbol, strategy_name, len(bars), proposed, submitted, False,
+                    f"trade-intent checkpoint failed before rejection was finalized: "
+                    f"{type(intent_error).__name__}: {intent_error}",
+                    rejected_orders,
+                    records,
+                )
             records.append(TradeExecutionRecord(order, latest_price, decision, "rejected", client_order_id))
             continue
+
+        try:
+            graph.record_trade_intent(
+                run_id=run_id,
+                experiment_name=contract.name,
+                strategy=strategy_name,
+                order=order,
+                reference_price=latest_price,
+                decision=decision,
+                status="approved_pending_submission",
+                client_order_id=client_order_id,
+            )
+        except Exception as intent_error:
+            records.append(
+                TradeExecutionRecord(order, latest_price, decision, "checkpoint_error", client_order_id)
+            )
+            return PaperTickResult(
+                symbol, strategy_name, len(bars), proposed, submitted, False,
+                f"trade-intent checkpoint failed before broker submission: "
+                f"{type(intent_error).__name__}: {intent_error}",
+                rejected_orders,
+                records,
+            )
 
         try:
             claim = graph.claim_execution(
@@ -251,12 +351,33 @@ def paper_tick(
             )
         if not claim.acquired:
             if claim.status == "submitted":
+                graph.record_trade_intent(
+                    run_id=run_id,
+                    experiment_name=contract.name,
+                    strategy=strategy_name,
+                    order=order,
+                    reference_price=latest_price,
+                    decision=decision,
+                    status="idempotent_replay",
+                    order_id=claim.broker_order_id,
+                    client_order_id=client_order_id,
+                )
                 records.append(
                     TradeExecutionRecord(
                         order, latest_price, decision, "idempotent_replay", client_order_id, claim.broker_order_id
                     )
                 )
             else:
+                graph.record_trade_intent(
+                    run_id=run_id,
+                    experiment_name=contract.name,
+                    strategy=strategy_name,
+                    order=order,
+                    reference_price=latest_price,
+                    decision=decision,
+                    status="submission_pending",
+                    client_order_id=client_order_id,
+                )
                 records.append(
                     TradeExecutionRecord(order, latest_price, decision, "submission_pending", client_order_id)
                 )
@@ -268,6 +389,16 @@ def paper_tick(
             try:
                 response = broker.order_by_client_order_id(client_order_id)
             except Exception as lookup_error:
+                graph.record_trade_intent(
+                    run_id=run_id,
+                    experiment_name=contract.name,
+                    strategy=strategy_name,
+                    order=order,
+                    reference_price=latest_price,
+                    decision=decision,
+                    status="submission_ambiguous",
+                    client_order_id=client_order_id,
+                )
                 records.append(
                     TradeExecutionRecord(
                         order,
@@ -286,13 +417,43 @@ def paper_tick(
                     records,
                 )
         submitted.append(response)
-        graph.record_execution_success(
-            client_order_id=client_order_id,
-            experiment_name=contract.name,
-            run_id=run_id,
-            broker_order_id=response.order_id,
-            response=asdict(response),
-        )
+        try:
+            graph.record_execution_success(
+                client_order_id=client_order_id,
+                experiment_name=contract.name,
+                run_id=run_id,
+                broker_order_id=response.order_id,
+                response=asdict(response),
+            )
+            graph.record_trade_intent(
+                run_id=run_id,
+                experiment_name=contract.name,
+                strategy=strategy_name,
+                order=order,
+                reference_price=latest_price,
+                decision=decision,
+                status="submitted",
+                order_id=response.order_id,
+                client_order_id=client_order_id,
+            )
+        except Exception as checkpoint_error:
+            records.append(
+                TradeExecutionRecord(
+                    order,
+                    latest_price,
+                    decision,
+                    "post_submit_checkpoint_error",
+                    client_order_id,
+                    response.order_id,
+                )
+            )
+            return PaperTickResult(
+                symbol, strategy_name, len(bars), proposed, submitted, False,
+                "broker accepted an order but the post-submit checkpoint failed; "
+                f"manual reconciliation required: {type(checkpoint_error).__name__}: {checkpoint_error}",
+                rejected_orders,
+                records,
+            )
         records.append(
             TradeExecutionRecord(order, latest_price, decision, "submitted", client_order_id, response.order_id)
         )
