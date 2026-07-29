@@ -1,9 +1,11 @@
 # Trading Agent
 
-A backtest + AI research agent for stock trading strategies. Built ground-up — no LangChain, no agent frameworks. Direct Anthropic SDK with a hand-written ReAct loop.
+A research-first backtest + AI agent for stock-strategy experiments. Built ground-up — no LangChain, no agent frameworks. Direct Anthropic SDK with a hand-written ReAct loop.
+
+This is a portfolio/recruiter demo of agent orchestration, backtest engineering, and safety controls. It is **not investment advice**, not a signal service, and not evidence of market-beating performance.
 
 **🟢 Try it live**:
-- **Web app** (run the agent, backtest, paper trade — all in your browser): https://ai-trading-agent-laith.streamlit.app/
+- **Web app** (run research-mode agent sessions and backtests in your browser): https://ai-trading-agent-laith.streamlit.app/
 - **Project page** with interactive transcript demos: https://laithaskar.github.io/ai-trading-agent/
 
 **Latest** (V8c): OpenRouter OAuth sign-in for the web app — authorize once instead of pasting a raw API key. Plus NexusTrade MCP integration (55 remote tools merged into the agent) and a news-sentiment strategy via AlphaVantage NEWS_SENTIMENT.
@@ -60,7 +62,25 @@ That's the whole setup. Detailed flags and every other command are documented be
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **104 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, and a mock-driven loop test.
+- **150 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, and autonomous experiment tests.
+
+## Recruiter-friendly demo path
+
+If you have five minutes and do not want to wire up API keys:
+
+1. Open the web app and go straight to **Backtest**. This path does not need an LLM key.
+2. Use the sample input: `sma_cross`, `AAPL`, `2020-01-01` → `2024-12-31`, params `fast=20,slow=50`, slippage `5 bps`, commission `$0`.
+3. Read the result as a research artifact, not as a trading recommendation: the strategy can look good on standalone return metrics while still losing to a passive buy-and-hold benchmark.
+
+Representative local run from this repo/branch:
+
+```text
+strategy=sma_cross, symbol=AAPL, window=2020-01-01..2024-12-31, params fast=20 slow=50
+strategy return: 99.71%, CAGR: 14.86%, win rate: 71.43%, Sharpe: 0.89, Sharpe p-value: 0.0464
+benchmark framing: buy-and-hold beat the strategy over the same window, so this is a demo of measurement and skepticism rather than a claim of alpha.
+```
+
+The most important credibility signal is the tooling around the number: explicit lookahead-safety contract, slippage assumptions, buy-and-hold comparison, p-value warning, replayable artifacts, and paper-only/live-disabled broker code.
 
 ## Run a backtest (no LLM)
 
@@ -72,6 +92,14 @@ Outputs `data/results/<run>/`:
 - `summary.json` — metrics + config
 - `equity_curve.csv` + `equity_curve.png`
 - `trades.csv` — every fill
+
+Optional Obsidian research log:
+
+```powershell
+python -m trading_agent backtest --strategy sma_cross --symbol AAPL --start 2020-01-01 --end 2024-12-31 --param fast=20 --param slow=50 --save-obsidian
+```
+
+`--save-obsidian` writes a cautious research-only Markdown report to `/Users/laithaskar/Documents/Hermes Brain/03_Trading/Backtests/`. Reports explicitly mark the run as not approved for paper trading or real trading, include benchmark comparison, and include a skepticism checklist so good-looking curves are not promoted without review.
 
 ## Run the agent
 
@@ -278,7 +306,7 @@ If you change `backtest/engine.py`, those tests are your tripwire. Don't let the
 
 **Why these decisions, in plain English:**
 
-- **No LLM-in-the-strategy.** The agent uses an LLM to *orchestrate* (decide what to backtest, what to compare, how to summarize). The strategies themselves are deterministic Python. This is a deliberate choice: an LLM that emits buy/sell decisions on the fly is unauditable, expensive, and non-reproducible. The orchestrator pattern (LLM as planner over deterministic tools) is what production agents like Cursor and Claude Code actually use.
+- **No LLM-in-the-strategy.** The agent uses an LLM to *orchestrate* (decide what to backtest, what to compare, how to summarize). The strategies themselves are deterministic Python. This is a deliberate choice: an LLM that emits buy/sell decisions on the fly is unauditable, expensive, and non-reproducible. The orchestrator pattern keeps planning separate from deterministic execution.
 - **Structured SQLite memory, not vector search.** Run history has well-defined fields (symbol, strategy, sharpe, dates). Filtering by `sharpe > X` is more useful than semantic similarity. Vector retrieval gets relevant when we store free-form analysis notes — not yet.
 - **Hand-written ReAct loop, no LangChain.** Frameworks abstract away exactly the parts of an agent's behavior you most need to inspect and control. Building from scratch keeps the loop visible to the developer and the user.
 - **Strategy generation deferred to V3.** Letting the LLM write Python that then runs is the showy demo. It's also the safety risk: arbitrary code execution, AST whitelisting, sandboxing — non-trivial. Doing it after the platform is solid is the right order.

@@ -32,6 +32,15 @@ class AccountSnapshot:
     portfolio_value: float
     buying_power: float
     is_paper: bool
+    daily_pnl: float | None = None
+
+
+@dataclass(frozen=True)
+class MarketSessionSnapshot:
+    is_open: bool
+    timestamp: datetime
+    session_open: datetime | None
+    session_close: datetime | None
 
 
 class AlpacaPaperBroker:
@@ -64,11 +73,14 @@ class AlpacaPaperBroker:
 
     def account(self) -> AccountSnapshot:
         acct = self._client.get_account()
+        portfolio_value = float(acct.portfolio_value)
+        last_equity = getattr(acct, "last_equity", None)
         return AccountSnapshot(
             cash=float(acct.cash),
-            portfolio_value=float(acct.portfolio_value),
+            portfolio_value=portfolio_value,
             buying_power=float(acct.buying_power),
             is_paper=True,
+            daily_pnl=None if last_equity is None else portfolio_value - float(last_equity),
         )
 
     def positions(self) -> list[AlpacaPosition]:
@@ -101,9 +113,56 @@ class AlpacaPaperBroker:
             for o in self._client.get_orders(filter=req)
         ]
 
+    def trades_today(self, now: datetime | None = None) -> int:
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        now = now or datetime.now(timezone.utc)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, after=start)
+        orders = self._client.get_orders(filter=req)
+        filled_statuses = {"FILLED", "PARTIALLY_FILLED"}
+        return sum(1 for order in orders if str(order.status).split(".")[-1].upper() in filled_statuses)
+
+    def asset_class(self, symbol: str) -> str:
+        asset = self._client.get_asset(symbol.upper())
+        return str(asset.asset_class).split(".")[-1].upper()
+
+    def order_by_client_order_id(self, client_order_id: str) -> AlpacaOrder:
+        response = self._client.get_order_by_client_id(client_order_id)
+        return AlpacaOrder(
+            order_id=str(response.id),
+            symbol=str(response.symbol),
+            side=str(response.side).split(".")[-1],
+            quantity=float(response.qty),
+            status=str(response.status).split(".")[-1],
+            filled_avg_price=float(response.filled_avg_price) if response.filled_avg_price else None,
+            submitted_at=str(response.submitted_at),
+        )
+
+    def market_session(self) -> MarketSessionSnapshot:
+        from alpaca.trading.requests import GetCalendarRequest
+
+        clock = self._client.get_clock()
+        observed = clock.timestamp
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        calendars = self._client.get_calendar(
+            filters=GetCalendarRequest(start=observed.date(), end=observed.date())
+        )
+        session_open = session_close = None
+        if calendars:
+            session_open = calendars[0].open
+            session_close = calendars[0].close
+            if session_open.tzinfo is None:
+                session_open = session_open.replace(tzinfo=observed.tzinfo)
+            if session_close.tzinfo is None:
+                session_close = session_close.replace(tzinfo=observed.tzinfo)
+        return MarketSessionSnapshot(bool(clock.is_open), observed, session_open, session_close)
+
     # ---- writes ----
 
-    def submit_market_order(self, order: Order) -> AlpacaOrder:
+    def submit_market_order(self, order: Order, *, client_order_id: str | None = None) -> AlpacaOrder:
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.trading.requests import MarketOrderRequest
 
@@ -113,6 +172,7 @@ class AlpacaPaperBroker:
             qty=order.quantity,
             side=side,
             time_in_force=TimeInForce.DAY,
+            client_order_id=client_order_id,
         )
         resp = self._client.submit_order(req)
         return AlpacaOrder(

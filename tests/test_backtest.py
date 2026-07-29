@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from trading_agent.backtest.engine import BacktestEngine
+from trading_agent.backtest.metrics import compute_metrics
+from trading_agent.backtest.rigor import default_baselines, momentum_baseline, sma_crossover_baseline
 from trading_agent.core.events import Bar
 from trading_agent.core.orders import Order, Side
 from trading_agent.core.portfolio import Portfolio
@@ -153,3 +155,53 @@ def test_portfolio_round_trip_pnl():
     pf.fill_at(Order("X", Side.SELL, 10), price=12.0, timestamp=datetime(2024, 1, 2))
     assert pf.cash == pytest.approx(1020.0)
     assert pf.position("X") == 0.0
+
+
+class BuyThenSell(Strategy):
+    name = "buy_then_sell"
+
+    def __init__(self):
+        self._i = -1
+
+    def on_bar(self, bar, portfolio):
+        self._i += 1
+        if self._i == 0:
+            return [Order(symbol=bar.symbol, side=Side.BUY, quantity=10)]
+        if self._i == 2:
+            return [Order(symbol=bar.symbol, side=Side.SELL, quantity=10)]
+        return []
+
+
+def test_research_metrics_include_volatility_profit_factor_and_exposure():
+    bars = make_bars([(10, 10), (10, 12), (12, 14), (14, 16), (16, 16)])
+    result = BacktestEngine(starting_cash=1000.0).run(BuyThenSell(), "TEST", iter(bars))
+
+    metrics = compute_metrics(result.portfolio)
+
+    assert metrics.volatility_pct > 0
+    assert metrics.exposure_pct == pytest.approx(40.0)  # bars 1 and 2 of 5
+    assert metrics.num_round_trips == 1
+    assert metrics.win_rate_pct == pytest.approx(100.0)
+    assert metrics.profit_factor == float("inf")
+
+
+def test_default_baselines_are_deterministic_and_named():
+    bars = make_bars([(10 + i, 10 + i) for i in range(80)])
+
+    baselines = default_baselines(bars, starting_cash=1000.0)
+
+    assert set(baselines) == {"buy_and_hold", "sma_20_50", "momentum_20"}
+    assert baselines["buy_and_hold"].name == "buy_and_hold"
+    assert baselines["buy_and_hold"].exposure_pct == pytest.approx(100.0)
+    assert baselines["sma_20_50"].name == "sma_20_50"
+    assert baselines["momentum_20"].name == "momentum_20"
+
+
+def test_small_parameter_baselines_can_enter_market():
+    bars = make_bars([(10 + i, 10 + i) for i in range(10)])
+
+    sma = sma_crossover_baseline(bars, starting_cash=1000.0, fast=2, slow=3)
+    mom = momentum_baseline(bars, starting_cash=1000.0, lookback=2)
+
+    assert sma.exposure_pct > 0
+    assert mom.exposure_pct > 0

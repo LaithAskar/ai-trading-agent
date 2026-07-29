@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+import math
 
 
 class Side(str, Enum):
@@ -17,7 +18,11 @@ class Order:
     quantity: float
 
     def __post_init__(self) -> None:
-        if self.quantity <= 0:
+        try:
+            valid = not isinstance(self.quantity, bool) and math.isfinite(self.quantity) and self.quantity > 0
+        except TypeError:
+            valid = False
+        if not valid:
             raise ValueError(f"Order quantity must be positive, got {self.quantity}")
 
 

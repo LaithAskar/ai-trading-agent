@@ -134,7 +134,7 @@ def setup_page(title: str, icon: str = "📈") -> None:
 
         st.divider()
         st.caption("Keys live in this browser session only. Never written to disk.")
-        st.caption("Powered by Claude via the Anthropic SDK. No frameworks.")
+        st.caption("Direct Anthropic SDK integration. No agent frameworks.")
 
 
 def _handle_oauth_callback() -> None:

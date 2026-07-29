@@ -160,8 +160,14 @@ if submit_dry:
         st.markdown("---")
         st.markdown("#### Submit these to Alpaca paper?")
         st.caption("This will actually place market orders on your paper account.")
+        st.caption(
+            "Submission uses the conservative manual paper contract: $200 total capital, "
+            "$20 per trade, $40 per symbol, loss stops, and regular-market-hours enforcement."
+        )
         if st.checkbox("I understand these will be submitted to my paper account."):
             if st.button("🟢 Submit now", type="primary"):
+                from trading_agent.experiment import ExperimentContract
+
                 with st.spinner("Submitting..."):
                     live_result = paper_tick(
                         strategy_name=strategy,
@@ -170,6 +176,7 @@ if submit_dry:
                         lookback_days=int(lookback_days),
                         broker=broker,
                         dry_run=False,
+                        contract=ExperimentContract(name="manual-paper-ui"),
                     )
                 if live_result.submitted:
                     st.success(f"Submitted {len(live_result.submitted)} order(s).")

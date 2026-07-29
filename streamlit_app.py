@@ -11,9 +11,16 @@ setup_page("Home", icon="📈")
 st.title("📈 ai-trading-agent")
 st.markdown(
     """
-    A backtest + AI research agent for stock trading strategies. Hand-written
-    ReAct loop on the Anthropic SDK — no LangChain, no agent frameworks.
+    A research-first backtest + AI agent for stock-strategy experiments.
+    Hand-written ReAct loop on the Anthropic SDK — no LangChain, no agent
+    frameworks.
     """
+)
+
+st.info(
+    "Recruiter/demo framing: this app is for research, backtests, and paper-only "
+    "experiments. It is not investment advice or evidence of market-beating "
+    "performance; every backtest should be read against its buy-and-hold baseline."
 )
 
 st.markdown("### What you can do here")
@@ -45,14 +52,17 @@ st.divider()
 st.markdown("### Quick start")
 st.markdown(
     """
+    **No-key demo path:** open **Backtest** and run `sma_cross` on `AAPL`,
+    `2020-01-01` → `2024-12-31`, params `fast=20,slow=50`. This shows the
+    core artifact: strategy metrics, buy-and-hold comparison, p-value, and trade log.
+
+    **Agent path:**
     1. Click **Sign in with OpenRouter** in the sidebar and authorize — no raw API
        key to paste. (Prefer Anthropic directly? Use the **Advanced** expander.)
     2. Open the **Run Agent** page from the sidebar on the left.
-    3. Type a goal, e.g.:
+    3. Type a research goal, e.g.:
        > "Compare sma_cross and rsi_mean_rev on AAPL for 2022-2024 and tell me which performed better."
     4. Hit **Run** and watch.
-
-    Or skip the agent and go straight to **Backtest** to run a single strategy yourself.
     """
 )
 

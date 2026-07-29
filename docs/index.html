@@ -43,6 +43,27 @@ h2 { font-size: 22px; margin: 48px 0 16px; font-weight: 600; }
 }
 .badge.primary { background: #1d1d1f; color: #ffffff !important; border-color: #1d1d1f; }
 .badge.primary:hover { background: #000000; }
+.notice {
+    background: #fff8e5;
+    border: 1px solid #f0d48a;
+    border-radius: 12px;
+    padding: 16px 18px;
+    color: #4f3a00;
+    margin: 22px 0 0;
+    font-size: 14px;
+}
+.sample {
+    background: #ffffff;
+    border: 1px solid #d2d2d7;
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-top: 14px;
+}
+.sample code {
+    background: #ececef;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
 .cards {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -125,20 +146,42 @@ a:hover { text-decoration: underline; }
   <p class="kicker">A research project</p>
   <h1>ai-trading-agent</h1>
   <p class="tagline">
-    Backtest + AI research agent for stock strategies. Hand-written ReAct loop
+    Research-first backtest + AI agent for stock-strategy experiments. Hand-written ReAct loop
     on the Anthropic SDK — no agent frameworks. Inspired by the
     <a href="https://nexustrade.io/learn">AI Agents from Scratch</a> curriculum.
   </p>
+  <div class="notice">
+    Portfolio/recruiter demo only: this project demonstrates agent orchestration,
+    backtest rigor, and safety controls. It is not investment advice, not a signal
+    service, and not a claim of market-beating live performance.
+  </div>
   <div class="badges">
     <a class="badge primary" href="https://ai-trading-agent-laith.streamlit.app/">▶ Try the web app</a>
     <a class="badge" href="https://github.com/LaithAskar/ai-trading-agent">GitHub repo</a>
-    <span class="badge">80 tests passing</span>
+    <span class="badge">97 tests passing</span>
     <span class="badge">10 CLI commands</span>
     <span class="badge">8 agent tools</span>
     <span class="badge">4 reference strategies</span>
     <span class="badge">MIT license</span>
   </div>
 </header>
+
+<section class="section">
+  <h2>Five-minute credibility check</h2>
+  <div class="sample">
+    <p style="margin-top: 0;">
+      No API key needed: open the web app's <b>Backtest</b> tab and run
+      <code>sma_cross</code> on <code>AAPL</code>, <code>2020-01-01</code> to
+      <code>2024-12-31</code>, with params <code>fast=20,slow=50</code>.
+    </p>
+    <p>
+      Representative local result: 99.71% strategy return, 14.86% CAGR,
+      71.43% win rate, Sharpe 0.89, p-value 0.0464. The important caveat:
+      buy-and-hold beat it over the same window, so the demo is about honest
+      measurement and skepticism rather than a claim of alpha.
+    </p>
+  </div>
+</section>
 
 <section class="section">
   <h2>Interactive demos</h2>
@@ -152,12 +195,13 @@ a:hover { text-decoration: underline; }
 
     <a class="card" href="https://ai-trading-agent-laith.streamlit.app/">
       <div class="label">Live web app</div>
-      <h3>Run the agent yourself — backtest, sweep, paper trade</h3>
+      <h3>Run research-mode agent sessions and backtests</h3>
       <p>
         Six tabs: run the agent on any goal you type, backtest a strategy with
         full benchmark comparison, sweep parameters with optional walk-forward
-        validation, browse past sessions, and paper trade through Alpaca.
-        Bring your own Anthropic key.
+        validation, browse past sessions, and inspect the paper-only Alpaca
+        sandbox path. Bring your own Anthropic key for agent runs; plain
+        backtests work without one.
       </p>
       <p class="meta">Streamlit Cloud · paste your API key · no setup</p>
     </a>
@@ -167,9 +211,9 @@ a:hover { text-decoration: underline; }
       <div class="label">Latest — V8</div>
       <h3>Local tools + 55 NexusTrade MCP tools, over OAuth</h3>
       <p>
-        Agent merges our local 8 tools with the live NexusTrade MCP server's
+        Recorded session: agent merges local tools with the NexusTrade MCP server's
         55 tools (via OAuth 2.1 with PKCE + Dynamic Client Registration),
-        fetches Aurora's production planner prompt, lists portfolios, and
+        fetches a planner prompt exposed through that tool surface, lists portfolios, and
         pulls Polygon fundamentals for AAPL's peer group. Closes with an
         architectural tool-surface comparison.
       </p>
@@ -220,8 +264,7 @@ a:hover { text-decoration: underline; }
 <footer>
   <p>
     Source on <a href="https://github.com/LaithAskar/ai-trading-agent">GitHub</a>.
-    Built by <a href="https://github.com/LaithAskar">Laith Askar</a> with
-    <a href="https://claude.ai/code">Claude Code</a>.
+    Built by <a href="https://github.com/LaithAskar">Laith Askar</a>.
   </p>
 </footer>
 

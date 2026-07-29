@@ -9,6 +9,7 @@ import streamlit as st
 
 from app_shared import setup_page
 from trading_agent.config import PROJECT_ROOT
+from trading_agent.ui_defaults import strategy_default_params_text
 
 
 setup_page("Backtest", icon="🧪")
@@ -17,6 +18,13 @@ st.title("🧪 Backtest")
 st.caption(
     "Pick a strategy + symbol + window and run it. Every result shows the "
     "buy-and-hold benchmark side by side and the Sharpe significance test."
+)
+
+st.info(
+    "Suggested no-key demo: strategy `sma_cross`, ticker `AAPL`, dates "
+    "2020-01-01 to 2024-12-31, params `fast=20,slow=50`. Treat results as "
+    "research/backtest evidence only; a good-looking strategy still needs to "
+    "be compared against buy-and-hold and checked for statistical fragility."
 )
 
 
@@ -30,10 +38,11 @@ def _list_strategies() -> list[str]:
     )
 
 
+strategy = st.selectbox("Strategy", _list_strategies())
+
 with st.form("backtest_form"):
     c1, c2 = st.columns([2, 2])
     with c1:
-        strategy = st.selectbox("Strategy", _list_strategies())
         symbol = st.text_input("Ticker", value="AAPL").upper()
     with c2:
         start = st.date_input("Start", value=date(2022, 1, 1))
@@ -49,6 +58,8 @@ with st.form("backtest_form"):
 
     params_text = st.text_input(
         "Strategy params (optional)",
+        value=strategy_default_params_text(strategy),
+        key=f"backtest_params_{strategy}",
         placeholder="key=value,key=value  e.g.  fast=20,slow=50",
         help="Comma-separated. Integer/float/string auto-detected.",
     )
@@ -69,6 +80,9 @@ def _parse_params(s: str) -> dict:
         k, v = item.split("=", 1)
         k = k.strip()
         v = v.strip()
+        if v.lower() in {"true", "false"}:
+            out[k] = v.lower() == "true"
+            continue
         try:
             out[k] = int(v)
         except ValueError:
@@ -128,6 +142,17 @@ if run.sharpe_p_value >= 0.10:
         f"⚠️ Sharpe is not statistically distinguishable from zero "
         f"(p={run.sharpe_p_value:.3f}). Don't over-interpret this result."
     )
+if run.benchmark is not None:
+    if run.metrics.cagr_pct < run.benchmark.cagr_pct:
+        st.warning(
+            "Benchmark check: buy-and-hold had a higher CAGR over this same window. "
+            "Do not frame this as an outperforming trading strategy."
+        )
+    else:
+        st.info(
+            "Benchmark check: strategy CAGR is above buy-and-hold for this window, "
+            "but this is still an in-sample backtest and not proof of durable alpha."
+        )
 
 # Equity curve — reconstruct from the metrics we have
 st.markdown("### Equity curve")
