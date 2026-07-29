@@ -16,7 +16,6 @@ dependencies = [
     "edgartools>=5.0.0",
     "alpaca-py>=0.43.0",
     "publicdotcom-py==0.1.19",
-    "exchange-calendars==4.13.2",
     "streamlit>=1.30.0",
 ]
 

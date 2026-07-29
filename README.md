@@ -183,12 +183,13 @@ python -m trading_agent public-status
 ```
 
 `public-status` can only read cash, cash-only buying power, positions, and open
-orders. The underlying `PublicBroker` also defaults to read-only. Its guarded
-submission method requires an explicit enable flag, a positive per-order dollar
-ceiling, deterministic idempotency ID, successful broker preflight, cash-only
-buying power, core market hours, and an equity-only order. It is not wired into
-the CLI or autonomous runner; promoting it requires a separate reviewed live
-contract and reconciliation path.
+orders from one consistent portfolio snapshot. The `PublicBroker` is structurally
+read-only: it exposes no preflight, place, cancel, or replace method, and it is
+not wired into the autonomous runner. Public's current portfolio surface does
+not provide authoritative account-level daily P/L, so the adapter reports that
+field as unavailable rather than inferring a false zero from open positions.
+Live promotion requires a separate reviewed implementation and $200 contract
+after the paper soak, plus explicit authorization.
 
 ## SEC EDGAR filings + filings_sentiment strategy (V5)
 

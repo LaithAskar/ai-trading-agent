@@ -357,12 +357,12 @@ def public_status() -> None:
     broker = PublicBroker(
         cfg.public_api_secret_key,
         cfg.public_account_number,
-        allow_order_submission=False,
     )
     try:
-        acct = broker.account()
-        positions = broker.positions()
-        open_orders = broker.open_orders()
+        portfolio = broker.portfolio()
+        acct = broker.account(portfolio)
+        positions = broker.positions(portfolio)
+        open_orders = broker.open_orders(portfolio)
     finally:
         broker.close()
 
@@ -382,12 +382,16 @@ def public_status() -> None:
         ptable.add_column("Qty", justify="right")
         ptable.add_column("Market value", justify="right")
         ptable.add_column("Unrealized P/L", justify="right")
+
+        def display(value: float | None) -> str:
+            return "unavailable" if value is None else f"${value:,.2f}"
+
         for position in positions:
             ptable.add_row(
                 position.symbol,
-                f"{position.quantity:g}",
-                f"${position.market_value:,.2f}",
-                f"${position.unrealized_pl:,.2f}",
+                "unavailable" if position.quantity is None else f"{position.quantity:g}",
+                display(position.market_value),
+                display(position.unrealized_pl),
             )
         console.print(ptable)
     else:
