@@ -352,6 +352,55 @@ def test_execution_success_is_atomic_with_originating_trade_intent(tmp_path):
     assert retry.status == "pending"
 
 
+def test_reconciliation_rolls_back_execution_origin_and_retry_as_one_transaction(tmp_path):
+    from trading_agent.experiment import GateDecision
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    graph = ExperimentGraph(tmp_path / "graph.sqlite3")
+    order = Order("AAPL", Side.BUY, 1)
+    decision = GateDecision(True, "approved", 10.0, 10.0, 10.0)
+    graph.record_trade_intent(
+        run_id="origin-run",
+        experiment_name="atomic-reconciliation-test",
+        strategy="sma_cross",
+        order=order,
+        reference_price=10.0,
+        decision=decision,
+        status="approved_pending_submission",
+        client_order_id="ta-atomic-reconciliation",
+    )
+    graph.claim_execution(
+        client_order_id="ta-atomic-reconciliation",
+        experiment_name="atomic-reconciliation-test",
+        run_id="origin-run",
+    )
+
+    # No retry-run intent exists. The method updates execution and origin first,
+    # then must fail and roll the entire transaction back when retry audit is absent.
+    with pytest.raises(RuntimeError, match="no durable retry trade intent"):
+        graph.record_execution_success(
+            client_order_id="ta-atomic-reconciliation",
+            experiment_name="atomic-reconciliation-test",
+            run_id="retry-run",
+            origin_run_id="origin-run",
+            broker_order_id="broker-1",
+            response={"id": "broker-1"},
+            intent_status="reconciled_submission",
+        )
+
+    assert graph.successful_execution("ta-atomic-reconciliation") is None
+    origin = graph.trade_intents("origin-run")[0]
+    assert origin["status"] == "approved_pending_submission"
+    assert origin["order_id"] is None
+    claim = graph.claim_execution(
+        client_order_id="ta-atomic-reconciliation",
+        experiment_name="atomic-reconciliation-test",
+        run_id="retry-after-rollback",
+    )
+    assert claim.status == "pending"
+    assert claim.run_id == "origin-run"
+
+
 @pytest.mark.parametrize("paper_evidence", [False, "false", 1, object(), None])
 def test_paper_tick_requires_exact_boolean_paper_attestation(tmp_path, paper_evidence):
     from trading_agent.broker.alpaca import AccountSnapshot
