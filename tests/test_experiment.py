@@ -223,6 +223,16 @@ def test_gate_rejects_closed_market_and_auction_boundaries_but_allows_exact_open
     ).allowed is True
 
 
+@pytest.mark.parametrize("malformed", ["false", 1, object()])
+def test_gate_requires_exact_boolean_true_market_state(malformed):
+    contract = ExperimentContract(name="paper-test")
+    order = Order("AAPL", Side.BUY, 1)
+    portfolio = snapshot(market_is_open=malformed)  # type: ignore[arg-type]
+    decision = decide(contract, order, price=10, portfolio=portfolio)
+    assert decision.allowed is False
+    assert decision.reason == "market-hours state unavailable"
+
+
 def test_batch_gate_reserves_position_cash_and_trade_count_cumulatively():
     contract = ExperimentContract(
         name="paper-test", capital_cap_usd=100, max_trade_usd=20, max_position_usd=20, max_trades_per_day=2

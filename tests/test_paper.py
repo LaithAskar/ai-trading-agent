@@ -299,6 +299,8 @@ def test_paper_tick_is_retry_idempotent_and_durably_tracks_broker_success(tmp_pa
     assert second.execution_records[0].status == "idempotent_replay"
     assert second.execution_records[0].broker_order_id == "broker-1"
     assert graph.successful_execution(first_client_id)["broker_order_id"] == "broker-1"
+    assert graph.trade_intents("run-1")[0]["status"] == "submitted"
+    assert graph.trade_intents("run-2")[0]["status"] == "idempotent_replay"
 
 
 def test_execution_claim_atomically_elects_one_submitter(tmp_path):
@@ -426,6 +428,7 @@ def test_pre_submit_intent_survives_post_submit_checkpoint_failure(tmp_path):
             raise OSError("simulated disk failure")
 
     graph = BrokenSuccessGraph(db_path)
+    contract = ExperimentContract(name="checkpoint-failure-test")
     broker = MagicMock()
     broker.account.return_value = AccountSnapshot(200, 200, 200, True, daily_pnl=0.0)
     broker.positions.return_value = []
@@ -460,7 +463,7 @@ def test_pre_submit_intent_survives_post_submit_checkpoint_failure(tmp_path):
             symbol="AAPL",
             broker=broker,
             dry_run=False,
-            contract=ExperimentContract(name="checkpoint-failure-test"),
+            contract=contract,
             graph=graph,
         )
 
@@ -470,6 +473,29 @@ def test_pre_submit_intent_survives_post_submit_checkpoint_failure(tmp_path):
     with sqlite3.connect(db_path) as connection:
         row = connection.execute("SELECT status, order_id FROM trade_intents").fetchone()
     assert row == ("approved_pending_submission", None)
+
+    broker.order_by_client_order_id.return_value = broker.submit_market_order.return_value
+    with patch("trading_agent.broker.paper_runner.load_bars", return_value=frame), patch(
+        "trading_agent.broker.paper_runner.load_strategy", return_value=EmitsBuy()
+    ):
+        reconciled = paper_tick(
+            strategy_name="sma_cross",
+            symbol="AAPL",
+            broker=broker,
+            dry_run=False,
+            contract=contract,
+            graph=ExperimentGraph(db_path),
+            run_id="reconciliation-run",
+        )
+
+    broker.submit_market_order.assert_called_once()
+    broker.order_by_client_order_id.assert_called_once()
+    assert reconciled.execution_records[0].status == "reconciled_submission"
+    reconciled_client_id = reconciled.execution_records[0].client_order_id
+    assert reconciled_client_id
+    execution = ExperimentGraph(db_path).successful_execution(reconciled_client_id)
+    assert execution is not None
+    assert execution["broker_order_id"] == "broker-accepted"
 
 
 @pytest.mark.parametrize("field", ["cash", "portfolio_value", "buying_power", "daily_pnl"])

@@ -123,17 +123,18 @@ def test_positions_tolerate_sdk_optional_values_without_aborting_status():
 
 
 def test_open_notional_order_maps_without_quantity():
-    order = SimpleNamespace(
-        order_id="order-1",
-        instrument=SimpleNamespace(
-            symbol="aapl", type=SimpleNamespace(value="EQUITY")
-        ),
-        side=SimpleNamespace(value="BUY"),
-        quantity=None,
-        amount=Decimal("10"),
-        status=SimpleNamespace(value="NEW"),
-        average_price=None,
-        created_at=None,
+    from public_api_sdk import Order as SdkOrder
+
+    order = SdkOrder.model_validate(
+        {
+            "orderId": "order-1",
+            "instrument": {"symbol": "AAPL", "type": "EQUITY"},
+            "type": "MARKET",
+            "side": "BUY",
+            "status": "NEW",
+            "quantity": None,
+            "notionalValue": "10",
+        }
     )
     mapped = _broker().open_orders(_portfolio(orders=[order]))[0]
 

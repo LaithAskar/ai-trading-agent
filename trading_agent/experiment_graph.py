@@ -249,7 +249,7 @@ class ExperimentGraph:
         client_order_id: str | None = None,
     ) -> str:
         intent_id = (
-            f"intent_{uuid.uuid5(uuid.NAMESPACE_URL, 'trade-intent:' + client_order_id).hex[:24]}"
+            f"intent_{uuid.uuid5(uuid.NAMESPACE_URL, 'trade-intent:' + run_id + ':' + client_order_id).hex[:24]}"
             if client_order_id
             else f"intent_{uuid.uuid4().hex[:12]}"
         )

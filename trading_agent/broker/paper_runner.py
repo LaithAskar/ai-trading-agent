@@ -368,18 +368,112 @@ def paper_tick(
                     )
                 )
             else:
-                graph.record_trade_intent(
-                    run_id=run_id,
-                    experiment_name=contract.name,
-                    strategy=strategy_name,
-                    order=order,
-                    reference_price=latest_price,
-                    decision=decision,
-                    status="submission_pending",
-                    client_order_id=client_order_id,
-                )
+                try:
+                    reconciled = broker.order_by_client_order_id(client_order_id)
+                except Exception as lookup_error:
+                    graph.record_trade_intent(
+                        run_id=run_id,
+                        experiment_name=contract.name,
+                        strategy=strategy_name,
+                        order=order,
+                        reference_price=latest_price,
+                        decision=decision,
+                        status="submission_ambiguous",
+                        client_order_id=client_order_id,
+                    )
+                    records.append(
+                        TradeExecutionRecord(
+                            order,
+                            latest_price,
+                            decision,
+                            "submission_ambiguous",
+                            client_order_id,
+                        )
+                    )
+                    return PaperTickResult(
+                        symbol,
+                        strategy_name,
+                        len(bars),
+                        proposed,
+                        submitted,
+                        False,
+                        "pending submission could not be reconciled: "
+                        f"{type(lookup_error).__name__}: {lookup_error}",
+                        rejected_orders,
+                        records,
+                    )
+                if reconciled is None:
+                    graph.record_trade_intent(
+                        run_id=run_id,
+                        experiment_name=contract.name,
+                        strategy=strategy_name,
+                        order=order,
+                        reference_price=latest_price,
+                        decision=decision,
+                        status="submission_pending",
+                        client_order_id=client_order_id,
+                    )
+                    records.append(
+                        TradeExecutionRecord(
+                            order,
+                            latest_price,
+                            decision,
+                            "submission_pending",
+                            client_order_id,
+                        )
+                    )
+                    continue
+                try:
+                    graph.record_execution_success(
+                        client_order_id=client_order_id,
+                        experiment_name=contract.name,
+                        run_id=run_id,
+                        broker_order_id=reconciled.order_id,
+                        response=asdict(reconciled),
+                    )
+                    graph.record_trade_intent(
+                        run_id=run_id,
+                        experiment_name=contract.name,
+                        strategy=strategy_name,
+                        order=order,
+                        reference_price=latest_price,
+                        decision=decision,
+                        status="reconciled_submission",
+                        order_id=reconciled.order_id,
+                        client_order_id=client_order_id,
+                    )
+                except Exception as checkpoint_error:
+                    records.append(
+                        TradeExecutionRecord(
+                            order,
+                            latest_price,
+                            decision,
+                            "post_reconciliation_checkpoint_error",
+                            client_order_id,
+                            reconciled.order_id,
+                        )
+                    )
+                    return PaperTickResult(
+                        symbol,
+                        strategy_name,
+                        len(bars),
+                        proposed,
+                        submitted,
+                        False,
+                        "broker order was reconciled but the local checkpoint failed: "
+                        f"{type(checkpoint_error).__name__}: {checkpoint_error}",
+                        rejected_orders,
+                        records,
+                    )
                 records.append(
-                    TradeExecutionRecord(order, latest_price, decision, "submission_pending", client_order_id)
+                    TradeExecutionRecord(
+                        order,
+                        latest_price,
+                        decision,
+                        "reconciled_submission",
+                        client_order_id,
+                        reconciled.order_id,
+                    )
                 )
             continue
 

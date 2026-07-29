@@ -216,7 +216,7 @@ class PublicBroker:
                 getattr(order, "quantity", None), "order quantity"
             ),
             amount=_optional_finite_float(
-                getattr(order, "amount", None), "order amount"
+                getattr(order, "notional_value", None), "order notional value"
             ),
             status=str(getattr(status, "value", status)).upper(),
             filled_avg_price=_optional_finite_float(
