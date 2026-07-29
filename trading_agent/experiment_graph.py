@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS order_executions (
     created_at TEXT NOT NULL,
     status TEXT NOT NULL,
     broker_order_id TEXT,
-    response_json TEXT
+    response_json TEXT,
+    updated_at TEXT
 );
 """
 
@@ -128,6 +129,13 @@ class BacktestCandidateRecord:
     artifact_dir: str | None
 
 
+@dataclass(frozen=True)
+class ExecutionClaim:
+    acquired: bool
+    status: str
+    broker_order_id: str | None = None
+
+
 class ExperimentGraph:
     """SQLite evidence graph for the autonomous trading experiment.
 
@@ -143,6 +151,10 @@ class ExperimentGraph:
             columns = {row[1] for row in c.execute("PRAGMA table_info(trade_intents)")}
             if "client_order_id" not in columns:
                 c.execute("ALTER TABLE trade_intents ADD COLUMN client_order_id TEXT")
+            execution_columns = {row[1] for row in c.execute("PRAGMA table_info(order_executions)")}
+            if "updated_at" not in execution_columns:
+                c.execute("ALTER TABLE order_executions ADD COLUMN updated_at TEXT")
+                c.execute("UPDATE order_executions SET updated_at = created_at WHERE updated_at IS NULL")
 
     def new_run_id(self) -> str:
         return f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -295,6 +307,48 @@ class ExperimentGraph:
             ).fetchone()
         return None if row is None else dict(row)
 
+    def claim_execution(
+        self,
+        *,
+        client_order_id: str,
+        experiment_name: str,
+        run_id: str,
+    ) -> ExecutionClaim:
+        """Atomically elect one submitter for a broker order intent.
+
+        The pending row is committed before broker I/O. Concurrent workers see
+        the existing row and must not submit. Only a confirmed broker response
+        or lookup may transition the row to ``submitted``.
+        """
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        c = sqlite3.connect(self.db_path, timeout=30, isolation_level=None)
+        c.row_factory = sqlite3.Row
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            inserted = c.execute(
+                """
+                INSERT OR IGNORE INTO order_executions
+                (client_order_id, experiment_name, run_id, created_at, status,
+                 broker_order_id, response_json, updated_at)
+                VALUES (?, ?, ?, ?, 'pending', NULL, NULL, ?)
+                """,
+                (client_order_id, experiment_name, run_id, now, now),
+            ).rowcount
+            row = c.execute(
+                "SELECT status, broker_order_id FROM order_executions WHERE client_order_id = ?",
+                (client_order_id,),
+            ).fetchone()
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
+        finally:
+            c.close()
+        if row is None:
+            raise RuntimeError("execution claim disappeared after insert")
+        return ExecutionClaim(bool(inserted), str(row["status"]), row["broker_order_id"])
+
     def record_execution_success(
         self,
         *,
@@ -307,10 +361,15 @@ class ExperimentGraph:
         with _conn(self.db_path) as c:
             c.execute(
                 """
-                INSERT OR REPLACE INTO order_executions
+                INSERT INTO order_executions
                 (client_order_id, experiment_name, run_id, created_at, status,
-                 broker_order_id, response_json)
-                VALUES (?, ?, ?, ?, 'submitted', ?, ?)
+                 broker_order_id, response_json, updated_at)
+                VALUES (?, ?, ?, ?, 'submitted', ?, ?, ?)
+                ON CONFLICT(client_order_id) DO UPDATE SET
+                    status = 'submitted',
+                    broker_order_id = excluded.broker_order_id,
+                    response_json = excluded.response_json,
+                    updated_at = excluded.updated_at
                 """,
                 (
                     client_order_id,
@@ -319,6 +378,7 @@ class ExperimentGraph:
                     datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     broker_order_id,
                     json.dumps(response, sort_keys=True, default=str),
+                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 ),
             )
 

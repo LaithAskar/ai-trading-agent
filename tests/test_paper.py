@@ -8,6 +8,7 @@ We don't hit Alpaca's API. We verify:
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -265,6 +266,27 @@ def test_paper_tick_is_retry_idempotent_and_durably_tracks_broker_success(tmp_pa
     assert second.execution_records[0].status == "idempotent_replay"
     assert second.execution_records[0].broker_order_id == "broker-1"
     assert graph.successful_execution(first_client_id)["broker_order_id"] == "broker-1"
+
+
+def test_execution_claim_atomically_elects_one_submitter(tmp_path):
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    db_path = tmp_path / "graph.sqlite3"
+    ExperimentGraph(db_path)
+
+    def claim_once(index: int):
+        graph = ExperimentGraph(db_path)
+        return graph.claim_execution(
+            client_order_id="ta-concurrent-intent",
+            experiment_name="concurrency-test",
+            run_id=f"run-{index}",
+        )
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        claims = list(pool.map(claim_once, range(100)))
+
+    assert sum(claim.acquired for claim in claims) == 1
+    assert {claim.status for claim in claims} == {"pending"}
 
 
 @pytest.mark.parametrize("paper_evidence", [False, "false", 1, object(), None])

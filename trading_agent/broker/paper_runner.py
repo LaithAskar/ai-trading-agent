@@ -232,13 +232,34 @@ def paper_tick(
             records.append(TradeExecutionRecord(order, latest_price, decision, "rejected", client_order_id))
             continue
 
-        prior = graph.successful_execution(client_order_id)
-        if prior is not None:
-            records.append(
-                TradeExecutionRecord(
-                    order, latest_price, decision, "idempotent_replay", client_order_id, prior["broker_order_id"]
-                )
+        try:
+            claim = graph.claim_execution(
+                client_order_id=client_order_id,
+                experiment_name=contract.name,
+                run_id=run_id,
             )
+        except Exception as claim_error:
+            records.append(
+                TradeExecutionRecord(order, latest_price, decision, "checkpoint_error", client_order_id)
+            )
+            return PaperTickResult(
+                symbol, strategy_name, len(bars), proposed, submitted, False,
+                f"execution checkpoint failed after {len(submitted)} confirmed submits: "
+                f"{type(claim_error).__name__}: {claim_error}",
+                rejected_orders,
+                records,
+            )
+        if not claim.acquired:
+            if claim.status == "submitted":
+                records.append(
+                    TradeExecutionRecord(
+                        order, latest_price, decision, "idempotent_replay", client_order_id, claim.broker_order_id
+                    )
+                )
+            else:
+                records.append(
+                    TradeExecutionRecord(order, latest_price, decision, "submission_pending", client_order_id)
+                )
             continue
 
         try:
