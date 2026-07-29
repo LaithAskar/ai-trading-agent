@@ -309,6 +309,62 @@ def paper_status() -> None:
         console.print(otable)
 
 
+@app.command(name="public-status")
+def public_status() -> None:
+    """Read Public account state without exposing any order-submission path."""
+    from .broker.public import PublicBroker
+
+    cfg = Config.load()
+    if not cfg.public_api_secret_key or not cfg.public_account_number:
+        console.print(
+            "[red]PUBLIC_API_SECRET_KEY / PUBLIC_ACCOUNT_NUMBER not set in .env[/red]"
+        )
+        console.print("Create an API secret in Public settings, then enter both values locally.")
+        raise typer.Exit(1)
+
+    broker = PublicBroker(
+        cfg.public_api_secret_key,
+        cfg.public_account_number,
+        allow_order_submission=False,
+    )
+    try:
+        acct = broker.account()
+        positions = broker.positions()
+        open_orders = broker.open_orders()
+    finally:
+        broker.close()
+
+    table = Table(title="Public account — READ ONLY")
+    table.add_column("Field")
+    table.add_column("Value", justify="right")
+    table.add_row("Cash", f"${acct.cash:,.2f}")
+    table.add_row("Portfolio value", f"${acct.portfolio_value:,.2f}")
+    table.add_row("Cash-only buying power", f"${acct.buying_power:,.2f}")
+    table.add_row("Daily P/L", f"${acct.daily_pnl:,.2f}" if acct.daily_pnl is not None else "unavailable")
+    table.add_row("Order submission", "DISABLED")
+    console.print(table)
+
+    if positions:
+        ptable = Table(title="Public positions")
+        ptable.add_column("Symbol")
+        ptable.add_column("Qty", justify="right")
+        ptable.add_column("Market value", justify="right")
+        ptable.add_column("Unrealized P/L", justify="right")
+        for position in positions:
+            ptable.add_row(
+                position.symbol,
+                f"{position.quantity:g}",
+                f"${position.market_value:,.2f}",
+                f"${position.unrealized_pl:,.2f}",
+            )
+        console.print(ptable)
+    else:
+        console.print("[dim]No Public positions[/dim]")
+
+    if open_orders:
+        console.print(f"[yellow]{len(open_orders)} open Public order(s) observed; no changes made.[/yellow]")
+
+
 @app.command(name="paper-trade")
 def paper_trade(
     strategy: str = typer.Option(..., help="Strategy module name"),

@@ -62,7 +62,7 @@ That's the whole setup. Detailed flags and every other command are documented be
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **150 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, and autonomous experiment tests.
+- **207 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, autonomous experiment tests, and Public adapter fail-closed tests.
 
 ## Recruiter-friendly demo path
 
@@ -158,7 +158,33 @@ python -m trading_agent paper-trade --strategy sma_cross --symbol AAPL --param f
 python -m trading_agent paper-trade --strategy sma_cross --symbol AAPL --param fast=20 --param slow=50 --no-dry-run
 ```
 
-The broker is hardcoded to paper. `AlpacaPaperBroker(..., allow_live=True)` raises `NotImplementedError` — live trading is *physically impossible* in this codebase, by design.
+The Alpaca broker is hardcoded to paper. `AlpacaPaperBroker(..., allow_live=True)` raises `NotImplementedError`.
+
+## Public API integration — read-only by default
+
+The repository also includes a fail-closed wrapper around Public's official
+`publicdotcom-py` SDK. Public is live-account infrastructure, not a paper
+sandbox, so there is deliberately no Public trade command or autonomous live
+runner. Configure the secret and account number locally (never commit `.env`):
+
+```text
+PUBLIC_API_SECRET_KEY=
+PUBLIC_ACCOUNT_NUMBER=
+```
+
+Then verify read-only connectivity:
+
+```bash
+python -m trading_agent public-status
+```
+
+`public-status` can only read cash, cash-only buying power, positions, and open
+orders. The underlying `PublicBroker` also defaults to read-only. Its guarded
+submission method requires an explicit enable flag, a positive per-order dollar
+ceiling, deterministic idempotency ID, successful broker preflight, cash-only
+buying power, core market hours, and an equity-only order. It is not wired into
+the CLI or autonomous runner; promoting it requires a separate reviewed live
+contract and reconciliation path.
 
 ## SEC EDGAR filings + filings_sentiment strategy (V5)
 
