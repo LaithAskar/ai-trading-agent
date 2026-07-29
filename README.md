@@ -172,9 +172,13 @@ PUBLIC_API_SECRET_KEY=
 PUBLIC_ACCOUNT_NUMBER=
 ```
 
-Then verify read-only connectivity:
+Then discover the account number and verify read-only connectivity:
 
 ```bash
+# Requires only PUBLIC_API_SECRET_KEY and makes a read-only account-list request.
+python -m trading_agent public-accounts
+
+# Add the returned ID as PUBLIC_ACCOUNT_NUMBER, then inspect the portfolio.
 python -m trading_agent public-status
 ```
 

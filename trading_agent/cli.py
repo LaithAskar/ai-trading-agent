@@ -309,6 +309,38 @@ def paper_status() -> None:
         console.print(otable)
 
 
+@app.command(name="public-accounts")
+def public_accounts() -> None:
+    """List Public account IDs using only a locally configured API secret."""
+    from public_api_sdk import ApiKeyAuthConfig, PublicApiClient, PublicApiClientConfiguration
+
+    cfg = Config.load()
+    if not cfg.public_api_secret_key:
+        console.print("[red]PUBLIC_API_SECRET_KEY not set in .env[/red]")
+        raise typer.Exit(1)
+
+    client = PublicApiClient(
+        ApiKeyAuthConfig(api_secret_key=cfg.public_api_secret_key, validity_minutes=15),
+        config=PublicApiClientConfiguration(),
+    )
+    try:
+        response = client.get_accounts()
+    finally:
+        client.close()
+
+    table = Table(title="Public accounts — READ ONLY")
+    table.add_column("Account ID")
+    table.add_column("Type")
+    table.add_column("Permissions")
+    for account in response.accounts:
+        table.add_row(
+            account.account_id,
+            str(getattr(account.account_type, "value", account.account_type)),
+            str(getattr(account.trade_permissions, "value", account.trade_permissions)),
+        )
+    console.print(table)
+
+
 @app.command(name="public-status")
 def public_status() -> None:
     """Read Public account state without exposing any order-submission path."""
