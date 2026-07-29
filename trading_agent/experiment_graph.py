@@ -367,8 +367,22 @@ class ExperimentGraph:
         run_id: str,
         broker_order_id: str,
         response: dict[str, Any],
+        intent_status: str = "submitted",
     ) -> None:
+        """Atomically persist broker success and repair the originating intent."""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with _conn(self.db_path) as c:
+            intent = c.execute(
+                """
+                SELECT raw_json FROM trade_intents
+                WHERE run_id = ? AND client_order_id = ?
+                """,
+                (run_id, client_order_id),
+            ).fetchone()
+            if intent is None:
+                raise RuntimeError("execution success has no durable trade intent")
+            raw = json.loads(intent["raw_json"])
+            raw["order_id"] = broker_order_id
             c.execute(
                 """
                 INSERT INTO order_executions
@@ -385,12 +399,28 @@ class ExperimentGraph:
                     client_order_id,
                     experiment_name,
                     run_id,
-                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    now,
                     broker_order_id,
                     json.dumps(response, sort_keys=True, default=str),
-                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    now,
                 ),
             )
+            updated = c.execute(
+                """
+                UPDATE trade_intents
+                SET status = ?, order_id = ?, raw_json = ?
+                WHERE run_id = ? AND client_order_id = ?
+                """,
+                (
+                    intent_status,
+                    broker_order_id,
+                    json.dumps(raw, sort_keys=True, default=str),
+                    run_id,
+                    client_order_id,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("durable trade intent changed during success checkpoint")
 
     def trade_intents(self, run_id: str) -> list[dict[str, Any]]:
         with _conn(self.db_path) as c:

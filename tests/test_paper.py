@@ -324,6 +324,34 @@ def test_execution_claim_atomically_elects_one_submitter(tmp_path):
     assert {claim.status for claim in claims} == {"pending"}
 
 
+def test_execution_success_is_atomic_with_originating_trade_intent(tmp_path):
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    graph = ExperimentGraph(tmp_path / "graph.sqlite3")
+    graph.claim_execution(
+        client_order_id="ta-no-durable-intent",
+        experiment_name="atomic-test",
+        run_id="run-without-intent",
+    )
+
+    with pytest.raises(RuntimeError, match="no durable trade intent"):
+        graph.record_execution_success(
+            client_order_id="ta-no-durable-intent",
+            experiment_name="atomic-test",
+            run_id="run-without-intent",
+            broker_order_id="broker-1",
+            response={"id": "broker-1"},
+        )
+
+    assert graph.successful_execution("ta-no-durable-intent") is None
+    retry = graph.claim_execution(
+        client_order_id="ta-no-durable-intent",
+        experiment_name="atomic-test",
+        run_id="retry-run",
+    )
+    assert retry.status == "pending"
+
+
 @pytest.mark.parametrize("paper_evidence", [False, "false", 1, object(), None])
 def test_paper_tick_requires_exact_boolean_paper_attestation(tmp_path, paper_evidence):
     from trading_agent.broker.alpaca import AccountSnapshot
@@ -365,7 +393,8 @@ def test_paper_tick_requires_exact_boolean_paper_attestation(tmp_path, paper_evi
     assert result.execution_records[0].decision.allowed is False
 
 
-def test_paper_tick_records_ambiguous_submission_outcome(tmp_path):
+@pytest.mark.parametrize("lookup_outcome", [LookupError("lookup unavailable"), None])
+def test_paper_tick_records_ambiguous_submission_outcome(tmp_path, lookup_outcome):
     from trading_agent.broker.alpaca import AccountSnapshot, MarketSessionSnapshot
     from trading_agent.broker.paper_runner import paper_tick
     from trading_agent.experiment import ExperimentContract
@@ -381,7 +410,10 @@ def test_paper_tick_records_ambiguous_submission_outcome(tmp_path):
         True, now, now - timedelta(hours=2), now + timedelta(hours=2)
     )
     fake_broker.submit_market_order.side_effect = TimeoutError("submit timed out")
-    fake_broker.order_by_client_order_id.side_effect = LookupError("lookup unavailable")
+    if isinstance(lookup_outcome, Exception):
+        fake_broker.order_by_client_order_id.side_effect = lookup_outcome
+    else:
+        fake_broker.order_by_client_order_id.return_value = lookup_outcome
 
     class EmitsBuy:
         def on_start(self, symbols):

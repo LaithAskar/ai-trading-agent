@@ -430,17 +430,7 @@ def paper_tick(
                         run_id=run_id,
                         broker_order_id=reconciled.order_id,
                         response=asdict(reconciled),
-                    )
-                    graph.record_trade_intent(
-                        run_id=run_id,
-                        experiment_name=contract.name,
-                        strategy=strategy_name,
-                        order=order,
-                        reference_price=latest_price,
-                        decision=decision,
-                        status="reconciled_submission",
-                        order_id=reconciled.order_id,
-                        client_order_id=client_order_id,
+                        intent_status="reconciled_submission",
                     )
                 except Exception as checkpoint_error:
                     records.append(
@@ -510,6 +500,38 @@ def paper_tick(
                     rejected_orders,
                     records,
                 )
+            if response is None:
+                graph.record_trade_intent(
+                    run_id=run_id,
+                    experiment_name=contract.name,
+                    strategy=strategy_name,
+                    order=order,
+                    reference_price=latest_price,
+                    decision=decision,
+                    status="submission_ambiguous",
+                    client_order_id=client_order_id,
+                )
+                records.append(
+                    TradeExecutionRecord(
+                        order,
+                        latest_price,
+                        decision,
+                        "submission_ambiguous",
+                        client_order_id,
+                    )
+                )
+                return PaperTickResult(
+                    symbol,
+                    strategy_name,
+                    len(bars),
+                    proposed,
+                    submitted,
+                    False,
+                    "broker submission timed out and lookup did not yet find the order; "
+                    "outcome remains ambiguous and must be reconciled without resubmission",
+                    rejected_orders,
+                    records,
+                )
         submitted.append(response)
         try:
             graph.record_execution_success(
@@ -518,17 +540,6 @@ def paper_tick(
                 run_id=run_id,
                 broker_order_id=response.order_id,
                 response=asdict(response),
-            )
-            graph.record_trade_intent(
-                run_id=run_id,
-                experiment_name=contract.name,
-                strategy=strategy_name,
-                order=order,
-                reference_price=latest_price,
-                decision=decision,
-                status="submitted",
-                order_id=response.order_id,
-                client_order_id=client_order_id,
             )
         except Exception as checkpoint_error:
             records.append(
