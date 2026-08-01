@@ -13,6 +13,7 @@ from ..core.portfolio import Portfolio
 from ..data.yfinance_source import iter_bars, load_bars
 from ..experiment import ExperimentContract, GateDecision, PortfolioSnapshot, evaluate_order_batch
 from ..experiment_graph import ExperimentGraph
+from ..strategy_policy import execution_block_reason
 from .alpaca import AlpacaOrder, AlpacaPaperBroker
 
 
@@ -82,6 +83,10 @@ def paper_tick(
     run_id: str = "standalone",
 ) -> PaperTickResult:
     """Replay strategy state, gate its latest batch, and submit only to Alpaca paper."""
+    if not dry_run:
+        blocked_reason = execution_block_reason(strategy_name)
+        if blocked_reason is not None:
+            return _empty_result(symbol, strategy_name, False, blocked_reason)
     params = params or {}
     strategy = load_strategy(strategy_name, params)
 

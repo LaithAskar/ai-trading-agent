@@ -9,12 +9,22 @@ from .broker.paper_runner import PaperTickResult, paper_tick
 from .config import DATA_DIR, PROJECT_ROOT
 from .experiment import ExperimentContract
 from .experiment_graph import BacktestCandidateRecord, ExperimentGraph
+from .strategy_policy import RESEARCH_ONLY_STRATEGIES
 
 DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA"]
 DEFAULT_STRATEGIES = ["sma_cross", "rsi_mean_rev"]
+
 DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "sma_cross": {"fast": 20, "slow": 50},
     "rsi_mean_rev": {"period": 14, "oversold": 30.0, "overbought": 70.0},
+    "ai_oligopoly_leaders": {
+        "fast": 20,
+        "slow": 50,
+        "momentum_lookback": 20,
+        "min_momentum_pct": 5.0,
+        "leaders": "NVDA,MSFT,GOOGL,AMZN,META,AVGO,TSM,ASML",
+        "target_notional": 20.0,
+    },
 }
 
 
@@ -139,6 +149,11 @@ def run_autonomous_daily(
     run_id = graph.new_run_id()
     symbols = [s.upper() for s in (symbols or DEFAULT_SYMBOLS)]
     strategies = strategies or DEFAULT_STRATEGIES
+    blocked_execution = sorted(RESEARCH_ONLY_STRATEGIES.intersection(strategies))
+    if execute and blocked_execution:
+        raise ValueError(
+            "research-only strategies cannot execute: " + ", ".join(blocked_execution)
+        )
     start, end = _default_dates(lookback_days)
 
     candidates: list[BacktestCandidateRecord] = []

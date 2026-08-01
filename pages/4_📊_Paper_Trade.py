@@ -13,6 +13,7 @@ import streamlit as st
 
 from app_shared import require_alpaca_creds, setup_page
 from trading_agent.config import PROJECT_ROOT
+from trading_agent.ui_defaults import parse_strategy_params_text, strategy_default_params_text
 
 
 setup_page("Paper Trade", icon="📊")
@@ -114,26 +115,11 @@ with st.form("paper_tick_form"):
     lookback_days = st.number_input("Lookback days", value=365, min_value=30, max_value=3650)
     params_text = st.text_input(
         "Strategy params (optional)",
+        value=strategy_default_params_text(strategy),
+        key=f"paper_params_{strategy}",
         placeholder="key=value,key=value  e.g.  fast=20,slow=50",
     )
     submit_dry = st.form_submit_button("▶ Dry run (no orders submitted)", type="primary", use_container_width=True)
-
-
-def _parse_params(s: str) -> dict:
-    out = {}
-    for item in s.split(","):
-        if "=" not in item:
-            continue
-        k, v = item.split("=", 1)
-        k, v = k.strip(), v.strip()
-        try:
-            out[k] = int(v)
-        except ValueError:
-            try:
-                out[k] = float(v)
-            except ValueError:
-                out[k] = v
-    return out
 
 
 if submit_dry:
@@ -143,7 +129,7 @@ if submit_dry:
         result = paper_tick(
             strategy_name=strategy,
             symbol=symbol,
-            params=_parse_params(params_text),
+            params=parse_strategy_params_text(params_text),
             lookback_days=int(lookback_days),
             broker=broker,
             dry_run=True,
@@ -172,7 +158,7 @@ if submit_dry:
                     live_result = paper_tick(
                         strategy_name=strategy,
                         symbol=symbol,
-                        params=_parse_params(params_text),
+                        params=parse_strategy_params_text(params_text),
                         lookback_days=int(lookback_days),
                         broker=broker,
                         dry_run=False,
