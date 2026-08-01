@@ -9,10 +9,11 @@ from .broker.paper_runner import PaperTickResult, paper_tick
 from .config import DATA_DIR, PROJECT_ROOT
 from .experiment import ExperimentContract
 from .experiment_graph import BacktestCandidateRecord, ExperimentGraph
+from .strategy_policy import RESEARCH_ONLY_STRATEGIES
 
 DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA"]
 DEFAULT_STRATEGIES = ["sma_cross", "rsi_mean_rev"]
-RESEARCH_ONLY_STRATEGIES = {"ai_oligopoly_leaders"}
+
 DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "sma_cross": {"fast": 20, "slow": 50},
     "rsi_mean_rev": {"period": 14, "oversold": 30.0, "overbought": 70.0},

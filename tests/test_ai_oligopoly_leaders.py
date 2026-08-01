@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import cast
+from unittest.mock import patch
 
 import pytest
 
@@ -13,6 +15,8 @@ from trading_agent.autonomous import (
 )
 from trading_agent.backtest.engine import BacktestEngine
 from trading_agent.backtest.runner import load_strategy
+from trading_agent.broker.alpaca import AlpacaPaperBroker
+from trading_agent.broker.paper_runner import paper_tick
 from trading_agent.core.events import Bar
 from trading_agent.core.orders import Side
 from trading_agent.core.portfolio import Portfolio
@@ -152,6 +156,24 @@ def test_explicit_strategy_execution_fails_closed_before_backtesting(tmp_path):
             broker=object(),
             graph=ExperimentGraph(tmp_path / "graph.sqlite3"),
         )
+
+
+def test_direct_paper_tick_execution_fails_closed_before_data_or_broker_access():
+    with patch("trading_agent.broker.paper_runner.load_bars") as load_bars:
+        result = paper_tick(
+            strategy_name="ai_oligopoly_leaders",
+            symbol="NVDA",
+            dry_run=False,
+            broker=cast(AlpacaPaperBroker, object()),
+            contract=ExperimentContract(name="direct-paper-boundary-test"),
+        )
+
+    load_bars.assert_not_called()
+    assert result.proposed_orders == []
+    assert result.submitted == []
+    assert result.dry_run is False
+    assert result.skipped_reason is not None
+    assert "research-only" in result.skipped_reason
 
 
 @pytest.mark.parametrize(
