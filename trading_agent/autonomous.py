@@ -12,6 +12,7 @@ from .experiment_graph import BacktestCandidateRecord, ExperimentGraph
 
 DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA"]
 DEFAULT_STRATEGIES = ["sma_cross", "rsi_mean_rev"]
+RESEARCH_ONLY_STRATEGIES = {"ai_oligopoly_leaders"}
 DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "sma_cross": {"fast": 20, "slow": 50},
     "rsi_mean_rev": {"period": 14, "oversold": 30.0, "overbought": 70.0},
@@ -147,6 +148,11 @@ def run_autonomous_daily(
     run_id = graph.new_run_id()
     symbols = [s.upper() for s in (symbols or DEFAULT_SYMBOLS)]
     strategies = strategies or DEFAULT_STRATEGIES
+    blocked_execution = sorted(RESEARCH_ONLY_STRATEGIES.intersection(strategies))
+    if execute and blocked_execution:
+        raise ValueError(
+            "research-only strategies cannot execute: " + ", ".join(blocked_execution)
+        )
     start, end = _default_dates(lookback_days)
 
     candidates: list[BacktestCandidateRecord] = []

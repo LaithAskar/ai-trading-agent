@@ -9,7 +9,7 @@ import streamlit as st
 
 from app_shared import setup_page
 from trading_agent.config import PROJECT_ROOT
-from trading_agent.ui_defaults import strategy_default_params_text
+from trading_agent.ui_defaults import parse_strategy_params_text, strategy_default_params_text
 
 
 setup_page("Backtest", icon="🧪")
@@ -70,30 +70,7 @@ if not submit:
     st.stop()
 
 
-def _parse_params(s: str) -> dict:
-    out = {}
-    if not s.strip():
-        return out
-    for item in s.split(","):
-        if "=" not in item:
-            continue
-        k, v = item.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if v.lower() in {"true", "false"}:
-            out[k] = v.lower() == "true"
-            continue
-        try:
-            out[k] = int(v)
-        except ValueError:
-            try:
-                out[k] = float(v)
-            except ValueError:
-                out[k] = v
-    return out
-
-
-params = _parse_params(params_text)
+params = parse_strategy_params_text(params_text)
 
 with st.spinner(f"Running {strategy} on {symbol} {start} → {end}..."):
     try:

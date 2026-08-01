@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict, deque
 from collections.abc import Iterable
 
@@ -14,7 +15,8 @@ class AiOligopolyLeaders(Strategy):
     """Belcourt-inspired, long-only trend strategy for a curated leader universe.
 
     This is an independent rules-based adaptation of Brooker Belcourt's public
-    investment themes, not a reproduction of his private Autopilot portfolio.
+    investment themes, not an exact reproduction of his Autopilot strategies,
+    holdings, allocation process, or implementation.
     It only consumes completed bars. Orders emitted for bar t are filled by the
     backtest engine at bar t+1 open.
     """
@@ -50,7 +52,7 @@ class AiOligopolyLeaders(Strategy):
         if not math.isfinite(target_notional) or target_notional <= 0:
             raise ValueError("target_notional must be finite and positive")
 
-        raw_leaders = leaders.split(",") if isinstance(leaders, str) else leaders
+        raw_leaders = re.split(r"[,|]", leaders) if isinstance(leaders, str) else leaders
         normalized = {str(symbol).strip().upper() for symbol in raw_leaders if str(symbol).strip()}
         if not normalized:
             raise ValueError("leaders must contain at least one symbol")
