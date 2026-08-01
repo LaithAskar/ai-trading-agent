@@ -145,12 +145,12 @@ class GateDecision:
 
 
 def _market_boundary_reason(contract: ExperimentContract, portfolio: PortfolioSnapshot) -> str | None:
-    if not contract.normal_market_hours_only:
-        return None
     if portfolio.market_is_open is not True or portfolio.observed_at is None:
         if portfolio.market_is_open is False:
             return "market is closed"
         return "market-hours state unavailable"
+    if not contract.normal_market_hours_only:
+        return None
     if portfolio.session_open is None or portfolio.session_close is None:
         return "market session boundary unavailable"
     observed = portfolio.observed_at

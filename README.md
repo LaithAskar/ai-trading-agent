@@ -62,7 +62,7 @@ That's the whole setup. Detailed flags and every other command are documented be
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **225 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, autonomous experiment tests, and Public adapter fail-closed tests.
+- **232 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, autonomous experiment tests, and Public adapter fail-closed tests.
 
 ## Recruiter-friendly demo path
 

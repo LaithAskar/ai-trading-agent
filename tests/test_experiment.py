@@ -223,6 +223,33 @@ def test_gate_rejects_closed_market_and_auction_boundaries_but_allows_exact_open
     ).allowed is True
 
 
+@pytest.mark.parametrize("market_state", [False, None, "false", 1, object()])
+def test_market_must_be_literal_true_even_when_session_window_policy_is_disabled(market_state):
+    contract = ExperimentContract(name="paper-test", normal_market_hours_only=False)
+    decision = decide(
+        contract,
+        Order("AAPL", Side.BUY, 1),
+        price=10,
+        portfolio=snapshot(market_is_open=market_state),
+    )
+
+    assert decision.allowed is False
+    expected = "market is closed" if market_state is False else "market-hours state unavailable"
+    assert decision.reason == expected
+
+
+def test_disabling_session_window_policy_still_allows_literal_open_without_boundaries():
+    contract = ExperimentContract(name="paper-test", normal_market_hours_only=False)
+    decision = decide(
+        contract,
+        Order("AAPL", Side.BUY, 1),
+        price=10,
+        portfolio=snapshot(market_is_open=True, session_open=None, session_close=None),
+    )
+
+    assert decision.allowed is True
+
+
 @pytest.mark.parametrize("malformed", ["false", 1, object()])
 def test_gate_requires_exact_boolean_true_market_state(malformed):
     contract = ExperimentContract(name="paper-test")

@@ -442,6 +442,55 @@ def test_paper_tick_requires_exact_boolean_paper_attestation(tmp_path, paper_evi
     assert result.execution_records[0].decision.allowed is False
 
 
+def test_closed_market_cannot_submit_when_session_window_policy_is_disabled(tmp_path):
+    from trading_agent.broker.alpaca import AccountSnapshot, MarketSessionSnapshot
+    from trading_agent.broker.paper_runner import paper_tick
+    from trading_agent.experiment import ExperimentContract
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    fake_broker = MagicMock()
+    fake_broker.account.return_value = AccountSnapshot(200, 200, 200, True, daily_pnl=0.0)
+    fake_broker.positions.return_value = []
+    fake_broker.trades_today.return_value = 0
+    fake_broker.asset_class.return_value = "US_EQUITY"
+    now = datetime.now().astimezone() + timedelta(minutes=1)
+    fake_broker.market_session.return_value = MarketSessionSnapshot(
+        False, now, now - timedelta(hours=2), now + timedelta(hours=2)
+    )
+
+    class EmitsBuy:
+        def on_start(self, symbols):
+            pass
+
+        def on_bar(self, bar, portfolio):
+            return [Order("AAPL", Side.BUY, 1)]
+
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"open": [10], "high": [10], "low": [10], "close": [10], "volume": [100]},
+        index=pd.date_range("2026-07-27", periods=1, freq="D"),
+    )
+    with patch("trading_agent.broker.paper_runner.load_bars", return_value=frame), patch(
+        "trading_agent.broker.paper_runner.load_strategy", return_value=EmitsBuy()
+    ):
+        result = paper_tick(
+            strategy_name="sma_cross",
+            symbol="AAPL",
+            broker=fake_broker,
+            dry_run=False,
+            contract=ExperimentContract(
+                name="closed-market-test",
+                normal_market_hours_only=False,
+            ),
+            graph=ExperimentGraph(tmp_path / "graph.sqlite3"),
+        )
+
+    fake_broker.submit_market_order.assert_not_called()
+    assert result.execution_records[0].status == "rejected"
+    assert result.execution_records[0].decision.reason == "market is closed"
+
+
 @pytest.mark.parametrize("lookup_outcome", [LookupError("lookup unavailable"), None])
 def test_paper_tick_records_ambiguous_submission_outcome(tmp_path, lookup_outcome):
     from trading_agent.broker.alpaca import AccountSnapshot, MarketSessionSnapshot
