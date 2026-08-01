@@ -3,6 +3,14 @@ from __future__ import annotations
 STRATEGY_DEFAULT_PARAMS: dict[str, dict[str, object]] = {
     "sma_cross": {"fast": 20, "slow": 50},
     "rsi_mean_rev": {"period": 14, "oversold": 30.0, "overbought": 70.0},
+    "ai_oligopoly_leaders": {
+        "fast": 20,
+        "slow": 50,
+        "momentum_lookback": 20,
+        "min_momentum_pct": 5.0,
+        "leaders": "NVDA,MSFT,GOOGL,AMZN,META,AVGO,TSM,ASML",
+        "target_notional": 20.0,
+    },
     "filings_sentiment": {"threshold": 0.0, "form": "10-Q", "max_filings": 30},
     "filings_sentiment_llm": {
         "threshold": 0.05,
