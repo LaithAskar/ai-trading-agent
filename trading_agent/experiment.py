@@ -4,7 +4,7 @@ import json
 import math
 import re
 from dataclasses import asdict, dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
@@ -86,6 +86,12 @@ class ExperimentContract:
             raise ValueError("max_trades_per_day must be positive or None")
         if self.no_open_close_auction_window_minutes < 0:
             raise ValueError("no_open_close_auction_window_minutes cannot be negative")
+        try:
+            created = datetime.fromisoformat(self.created_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("created_at must be an ISO-8601 timestamp") from exc
+        if created.tzinfo is None:
+            raise ValueError("created_at must be timezone-aware")
         if not self.allowed_assets:
             raise ValueError("allowed_assets cannot be empty")
         allowed = {value.upper() for value in self.allowed_assets}
@@ -139,12 +145,12 @@ class GateDecision:
 
 
 def _market_boundary_reason(contract: ExperimentContract, portfolio: PortfolioSnapshot) -> str | None:
+    if portfolio.market_is_open is not True or portfolio.observed_at is None:
+        if portfolio.market_is_open is False:
+            return "market is closed"
+        return "market-hours state unavailable"
     if not contract.normal_market_hours_only:
         return None
-    if portfolio.market_is_open is None or portfolio.observed_at is None:
-        return "market-hours state unavailable"
-    if not portfolio.market_is_open:
-        return "market is closed"
     if portfolio.session_open is None or portfolio.session_close is None:
         return "market session boundary unavailable"
     observed = portfolio.observed_at
@@ -205,6 +211,20 @@ def evaluate_order(
         return reject("research mode cannot execute orders")
     if contract.mode == "live" and not contract.live_enabled:
         return reject("live execution not enabled")
+    if contract.autonomous is not True:
+        return reject("contract does not authorize autonomous execution")
+    if contract.trade_approval_required is not False:
+        return reject("contract requires trade approval")
+
+    if portfolio.observed_at is None or portfolio.observed_at.tzinfo is None:
+        return reject("contract time state unavailable")
+    created = datetime.fromisoformat(contract.created_at.replace("Z", "+00:00"))
+    observed = portfolio.observed_at.astimezone(timezone.utc)
+    created_utc = created.astimezone(timezone.utc)
+    if observed < created_utc:
+        return reject("experiment contract is not active yet")
+    if observed >= created_utc + timedelta(days=contract.duration_days):
+        return reject("experiment contract has expired")
 
     normalized_asset = asset_class.strip().upper() if asset_class else ""
     if not normalized_asset:

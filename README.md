@@ -62,7 +62,7 @@ That's the whole setup. Detailed flags and every other command are documented be
 - **SQLite-backed run memory** so the agent doesn't repeat work across sessions.
 - **Two run modes**: `--auto` (fully autonomous) and `--interactive` (approve each tool call).
 - **CLI**: backtest, list strategies, run agent, connect to remote MCP servers, replay past sessions, agent-stats, render HTML transcripts.
-- **150 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, and autonomous experiment tests.
+- **232 tests** including lookahead-safety regression tests, slippage/commission correctness, OpenRouter provider routing, paper-trading guardrails, autonomous experiment tests, and Public adapter fail-closed tests.
 
 ## Recruiter-friendly demo path
 
@@ -158,7 +158,38 @@ python -m trading_agent paper-trade --strategy sma_cross --symbol AAPL --param f
 python -m trading_agent paper-trade --strategy sma_cross --symbol AAPL --param fast=20 --param slow=50 --no-dry-run
 ```
 
-The broker is hardcoded to paper. `AlpacaPaperBroker(..., allow_live=True)` raises `NotImplementedError` — live trading is *physically impossible* in this codebase, by design.
+The Alpaca broker is hardcoded to paper. `AlpacaPaperBroker(..., allow_live=True)` raises `NotImplementedError`.
+
+## Public API integration — read-only by default
+
+The repository also includes a fail-closed wrapper around Public's official
+`publicdotcom-py` SDK. Public is live-account infrastructure, not a paper
+sandbox, so there is deliberately no Public trade command or autonomous live
+runner. Configure the secret and account number locally (never commit `.env`):
+
+```text
+PUBLIC_API_SECRET_KEY=
+PUBLIC_ACCOUNT_NUMBER=
+```
+
+Then discover the account number and verify read-only connectivity:
+
+```bash
+# Requires only PUBLIC_API_SECRET_KEY and makes a read-only account-list request.
+python -m trading_agent public-accounts
+
+# Add the returned ID as PUBLIC_ACCOUNT_NUMBER, then inspect the portfolio.
+python -m trading_agent public-status
+```
+
+`public-status` can only read cash, cash-only buying power, positions, and open
+orders from one consistent portfolio snapshot. The `PublicBroker` is structurally
+read-only: it exposes no preflight, place, cancel, or replace method, and it is
+not wired into the autonomous runner. Public's current portfolio surface does
+not provide authoritative account-level daily P/L, so the adapter reports that
+field as unavailable rather than inferring a false zero from open positions.
+Live promotion requires a separate reviewed implementation and $200 contract
+after the paper soak, plus explicit authorization.
 
 ## SEC EDGAR filings + filings_sentiment strategy (V5)
 

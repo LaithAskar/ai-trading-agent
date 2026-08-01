@@ -30,6 +30,8 @@ class Config:
     alpaca_api_key: str | None
     alpaca_api_secret: str | None
     alpaca_paper: bool
+    public_api_secret_key: str | None
+    public_account_number: str | None
     alphavantage_api_key: str | None
     openrouter_api_key: str | None
     openrouter_callback_url: str
@@ -50,6 +52,8 @@ class Config:
             alpaca_api_key=os.getenv("ALPACA_API_KEY") or None,
             alpaca_api_secret=os.getenv("ALPACA_API_SECRET") or None,
             alpaca_paper=os.getenv("ALPACA_PAPER", "true").lower() == "true",
+            public_api_secret_key=os.getenv("PUBLIC_API_SECRET_KEY") or None,
+            public_account_number=os.getenv("PUBLIC_ACCOUNT_NUMBER") or None,
             alphavantage_api_key=os.getenv("ALPHAVANTAGE_API_KEY") or None,
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
             openrouter_callback_url=os.getenv(

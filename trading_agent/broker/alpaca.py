@@ -158,7 +158,12 @@ class AlpacaPaperBroker:
                 session_open = session_open.replace(tzinfo=observed.tzinfo)
             if session_close.tzinfo is None:
                 session_close = session_close.replace(tzinfo=observed.tzinfo)
-        return MarketSessionSnapshot(bool(clock.is_open), observed, session_open, session_close)
+        is_open = getattr(clock, "is_open", None)
+        if is_open is not True:
+            # Fail closed on missing or malformed state; for example, the
+            # string "false" must not become truthy execution evidence.
+            is_open = False
+        return MarketSessionSnapshot(is_open, observed, session_open, session_close)
 
     # ---- writes ----
 

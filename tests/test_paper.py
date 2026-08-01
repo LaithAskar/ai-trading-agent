@@ -8,6 +8,7 @@ We don't hit Alpaca's API. We verify:
 """
 from __future__ import annotations
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -69,6 +70,38 @@ def test_submit_market_order_passes_buy_to_alpaca():
     from alpaca.trading.enums import OrderSide
     assert submitted_request.side == OrderSide.BUY
     assert submitted_request.qty == 5
+
+
+@pytest.mark.parametrize("malformed", ["false", "true", 1, object(), None])
+def test_market_session_fails_closed_on_non_boolean_open_state(malformed):
+    raw_clock = MagicMock(timestamp=datetime.now().astimezone(), is_open=malformed)
+    mock_client = MagicMock()
+    mock_client.get_clock.return_value = raw_clock
+    mock_client.get_calendar.return_value = []
+
+    with patch("alpaca.trading.client.TradingClient", return_value=mock_client):
+        from trading_agent.broker.alpaca import AlpacaPaperBroker
+
+        session = AlpacaPaperBroker("key", "secret").market_session()
+
+    assert session.is_open is False
+
+
+def test_client_order_identity_includes_params_and_closed_bar_timestamp():
+    from trading_agent.broker.paper_runner import _client_order_id
+    from trading_agent.experiment import ExperimentContract
+
+    contract = ExperimentContract(name="identity-test")
+    order = Order("AAPL", Side.BUY, 1)
+    baseline = _client_order_id(contract, "sma_cross", {"fast": 5}, order, "2026-07-28T20:00:00+00:00", 0)
+    changed_params = _client_order_id(
+        contract, "sma_cross", {"fast": 10}, order, "2026-07-28T20:00:00+00:00", 0
+    )
+    changed_bar = _client_order_id(
+        contract, "sma_cross", {"fast": 5}, order, "2026-07-28T21:00:00+00:00", 0
+    )
+
+    assert len({baseline, changed_params, changed_bar}) == 3
 
 
 def test_paper_tick_dry_run_does_not_call_broker(tmp_path, monkeypatch):
@@ -172,7 +205,7 @@ def test_paper_tick_applies_experiment_contract_gate(tmp_path, monkeypatch):
     fake_broker.positions.return_value = []
     fake_broker.trades_today.return_value = 0
     fake_broker.asset_class.return_value = "US_EQUITY"
-    now = datetime.now().astimezone()
+    now = datetime.now().astimezone() + timedelta(minutes=1)
     fake_broker.market_session.return_value = MarketSessionSnapshot(
         True, now, now - timedelta(hours=2), now + timedelta(hours=2)
     )
@@ -224,7 +257,7 @@ def test_paper_tick_is_retry_idempotent_and_durably_tracks_broker_success(tmp_pa
     fake_broker.positions.return_value = []
     fake_broker.trades_today.return_value = 0
     fake_broker.asset_class.return_value = "US_EQUITY"
-    now = datetime.now().astimezone()
+    now = datetime.now().astimezone() + timedelta(minutes=1)
     fake_broker.market_session.return_value = MarketSessionSnapshot(
         True, now, now - timedelta(hours=2), now + timedelta(hours=2)
     )
@@ -266,6 +299,8 @@ def test_paper_tick_is_retry_idempotent_and_durably_tracks_broker_success(tmp_pa
     assert second.execution_records[0].status == "idempotent_replay"
     assert second.execution_records[0].broker_order_id == "broker-1"
     assert graph.successful_execution(first_client_id)["broker_order_id"] == "broker-1"
+    assert graph.trade_intents("run-1")[0]["status"] == "submitted"
+    assert graph.trade_intents("run-2")[0]["status"] == "idempotent_replay"
 
 
 def test_execution_claim_atomically_elects_one_submitter(tmp_path):
@@ -287,6 +322,83 @@ def test_execution_claim_atomically_elects_one_submitter(tmp_path):
 
     assert sum(claim.acquired for claim in claims) == 1
     assert {claim.status for claim in claims} == {"pending"}
+
+
+def test_execution_success_is_atomic_with_originating_trade_intent(tmp_path):
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    graph = ExperimentGraph(tmp_path / "graph.sqlite3")
+    graph.claim_execution(
+        client_order_id="ta-no-durable-intent",
+        experiment_name="atomic-test",
+        run_id="run-without-intent",
+    )
+
+    with pytest.raises(RuntimeError, match="no durable trade intent"):
+        graph.record_execution_success(
+            client_order_id="ta-no-durable-intent",
+            experiment_name="atomic-test",
+            run_id="run-without-intent",
+            broker_order_id="broker-1",
+            response={"id": "broker-1"},
+        )
+
+    assert graph.successful_execution("ta-no-durable-intent") is None
+    retry = graph.claim_execution(
+        client_order_id="ta-no-durable-intent",
+        experiment_name="atomic-test",
+        run_id="retry-run",
+    )
+    assert retry.status == "pending"
+
+
+def test_reconciliation_rolls_back_execution_origin_and_retry_as_one_transaction(tmp_path):
+    from trading_agent.experiment import GateDecision
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    graph = ExperimentGraph(tmp_path / "graph.sqlite3")
+    order = Order("AAPL", Side.BUY, 1)
+    decision = GateDecision(True, "approved", 10.0, 10.0, 10.0)
+    graph.record_trade_intent(
+        run_id="origin-run",
+        experiment_name="atomic-reconciliation-test",
+        strategy="sma_cross",
+        order=order,
+        reference_price=10.0,
+        decision=decision,
+        status="approved_pending_submission",
+        client_order_id="ta-atomic-reconciliation",
+    )
+    graph.claim_execution(
+        client_order_id="ta-atomic-reconciliation",
+        experiment_name="atomic-reconciliation-test",
+        run_id="origin-run",
+    )
+
+    # No retry-run intent exists. The method updates execution and origin first,
+    # then must fail and roll the entire transaction back when retry audit is absent.
+    with pytest.raises(RuntimeError, match="no durable retry trade intent"):
+        graph.record_execution_success(
+            client_order_id="ta-atomic-reconciliation",
+            experiment_name="atomic-reconciliation-test",
+            run_id="retry-run",
+            origin_run_id="origin-run",
+            broker_order_id="broker-1",
+            response={"id": "broker-1"},
+            intent_status="reconciled_submission",
+        )
+
+    assert graph.successful_execution("ta-atomic-reconciliation") is None
+    origin = graph.trade_intents("origin-run")[0]
+    assert origin["status"] == "approved_pending_submission"
+    assert origin["order_id"] is None
+    claim = graph.claim_execution(
+        client_order_id="ta-atomic-reconciliation",
+        experiment_name="atomic-reconciliation-test",
+        run_id="retry-after-rollback",
+    )
+    assert claim.status == "pending"
+    assert claim.run_id == "origin-run"
 
 
 @pytest.mark.parametrize("paper_evidence", [False, "false", 1, object(), None])
@@ -330,7 +442,7 @@ def test_paper_tick_requires_exact_boolean_paper_attestation(tmp_path, paper_evi
     assert result.execution_records[0].decision.allowed is False
 
 
-def test_paper_tick_records_ambiguous_submission_outcome(tmp_path):
+def test_closed_market_cannot_submit_when_session_window_policy_is_disabled(tmp_path):
     from trading_agent.broker.alpaca import AccountSnapshot, MarketSessionSnapshot
     from trading_agent.broker.paper_runner import paper_tick
     from trading_agent.experiment import ExperimentContract
@@ -341,12 +453,65 @@ def test_paper_tick_records_ambiguous_submission_outcome(tmp_path):
     fake_broker.positions.return_value = []
     fake_broker.trades_today.return_value = 0
     fake_broker.asset_class.return_value = "US_EQUITY"
-    now = datetime.now().astimezone()
+    now = datetime.now().astimezone() + timedelta(minutes=1)
+    fake_broker.market_session.return_value = MarketSessionSnapshot(
+        False, now, now - timedelta(hours=2), now + timedelta(hours=2)
+    )
+
+    class EmitsBuy:
+        def on_start(self, symbols):
+            pass
+
+        def on_bar(self, bar, portfolio):
+            return [Order("AAPL", Side.BUY, 1)]
+
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"open": [10], "high": [10], "low": [10], "close": [10], "volume": [100]},
+        index=pd.date_range("2026-07-27", periods=1, freq="D"),
+    )
+    with patch("trading_agent.broker.paper_runner.load_bars", return_value=frame), patch(
+        "trading_agent.broker.paper_runner.load_strategy", return_value=EmitsBuy()
+    ):
+        result = paper_tick(
+            strategy_name="sma_cross",
+            symbol="AAPL",
+            broker=fake_broker,
+            dry_run=False,
+            contract=ExperimentContract(
+                name="closed-market-test",
+                normal_market_hours_only=False,
+            ),
+            graph=ExperimentGraph(tmp_path / "graph.sqlite3"),
+        )
+
+    fake_broker.submit_market_order.assert_not_called()
+    assert result.execution_records[0].status == "rejected"
+    assert result.execution_records[0].decision.reason == "market is closed"
+
+
+@pytest.mark.parametrize("lookup_outcome", [LookupError("lookup unavailable"), None])
+def test_paper_tick_records_ambiguous_submission_outcome(tmp_path, lookup_outcome):
+    from trading_agent.broker.alpaca import AccountSnapshot, MarketSessionSnapshot
+    from trading_agent.broker.paper_runner import paper_tick
+    from trading_agent.experiment import ExperimentContract
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    fake_broker = MagicMock()
+    fake_broker.account.return_value = AccountSnapshot(200, 200, 200, True, daily_pnl=0.0)
+    fake_broker.positions.return_value = []
+    fake_broker.trades_today.return_value = 0
+    fake_broker.asset_class.return_value = "US_EQUITY"
+    now = datetime.now().astimezone() + timedelta(minutes=1)
     fake_broker.market_session.return_value = MarketSessionSnapshot(
         True, now, now - timedelta(hours=2), now + timedelta(hours=2)
     )
     fake_broker.submit_market_order.side_effect = TimeoutError("submit timed out")
-    fake_broker.order_by_client_order_id.side_effect = LookupError("lookup unavailable")
+    if isinstance(lookup_outcome, Exception):
+        fake_broker.order_by_client_order_id.side_effect = lookup_outcome
+    else:
+        fake_broker.order_by_client_order_id.return_value = lookup_outcome
 
     class EmitsBuy:
         def on_start(self, symbols):
@@ -378,6 +543,98 @@ def test_paper_tick_records_ambiguous_submission_outcome(tmp_path):
     assert record.status == "submission_ambiguous"
     assert record.client_order_id
     assert record.decision.allowed is True
+
+
+def test_pre_submit_intent_survives_post_submit_checkpoint_failure(tmp_path):
+    from trading_agent.broker.alpaca import AccountSnapshot, AlpacaOrder, MarketSessionSnapshot
+    from trading_agent.broker.paper_runner import paper_tick
+    from trading_agent.experiment import ExperimentContract
+    from trading_agent.experiment_graph import ExperimentGraph
+
+    db_path = tmp_path / "graph.sqlite3"
+
+    class BrokenSuccessGraph(ExperimentGraph):
+        def record_execution_success(self, **kwargs):
+            raise OSError("simulated disk failure")
+
+    graph = BrokenSuccessGraph(db_path)
+    contract = ExperimentContract(name="checkpoint-failure-test")
+    broker = MagicMock()
+    broker.account.return_value = AccountSnapshot(200, 200, 200, True, daily_pnl=0.0)
+    broker.positions.return_value = []
+    broker.trades_today.return_value = 0
+    broker.asset_class.return_value = "US_EQUITY"
+    now = datetime.now().astimezone() + timedelta(minutes=1)
+    broker.market_session.return_value = MarketSessionSnapshot(
+        True, now, now - timedelta(hours=2), now + timedelta(hours=2)
+    )
+    broker.submit_market_order.return_value = AlpacaOrder(
+        "broker-accepted", "AAPL", "BUY", 1, "NEW", None, "now"
+    )
+
+    class EmitsBuy:
+        def on_start(self, symbols):
+            pass
+
+        def on_bar(self, bar, portfolio):
+            return [Order("AAPL", Side.BUY, 1)]
+
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"open": [10], "high": [10], "low": [10], "close": [10], "volume": [100]},
+        index=pd.date_range("2026-07-27", periods=1, freq="D"),
+    )
+    with patch("trading_agent.broker.paper_runner.load_bars", return_value=frame), patch(
+        "trading_agent.broker.paper_runner.load_strategy", return_value=EmitsBuy()
+    ):
+        result = paper_tick(
+            strategy_name="sma_cross",
+            symbol="AAPL",
+            broker=broker,
+            dry_run=False,
+            contract=contract,
+            graph=graph,
+        )
+
+    broker.submit_market_order.assert_called_once()
+    assert result.execution_records[0].status == "post_submit_checkpoint_error"
+    assert "manual reconciliation required" in (result.skipped_reason or "")
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute("SELECT status, order_id FROM trade_intents").fetchone()
+    assert row == ("approved_pending_submission", None)
+
+    broker.order_by_client_order_id.return_value = broker.submit_market_order.return_value
+    with patch("trading_agent.broker.paper_runner.load_bars", return_value=frame), patch(
+        "trading_agent.broker.paper_runner.load_strategy", return_value=EmitsBuy()
+    ):
+        reconciled = paper_tick(
+            strategy_name="sma_cross",
+            symbol="AAPL",
+            broker=broker,
+            dry_run=False,
+            contract=contract,
+            graph=ExperimentGraph(db_path),
+            run_id="reconciliation-run",
+        )
+
+    broker.submit_market_order.assert_called_once()
+    broker.order_by_client_order_id.assert_called_once()
+    assert reconciled.execution_records[0].status == "reconciled_submission"
+    reconciled_client_id = reconciled.execution_records[0].client_order_id
+    assert reconciled_client_id
+    execution = ExperimentGraph(db_path).successful_execution(reconciled_client_id)
+    assert execution is not None
+    assert execution["broker_order_id"] == "broker-accepted"
+    with sqlite3.connect(db_path) as connection:
+        intent_rows = connection.execute(
+            "SELECT run_id, status, order_id FROM trade_intents ORDER BY run_id"
+        ).fetchall()
+    assert {row[1] for row in intent_rows} == {"submitted", "reconciled_submission"}
+    assert {row[2] for row in intent_rows} == {"broker-accepted"}
+    assert next(row for row in intent_rows if row[0] == "reconciliation-run")[1] == (
+        "reconciled_submission"
+    )
 
 
 @pytest.mark.parametrize("field", ["cash", "portfolio_value", "buying_power", "daily_pnl"])

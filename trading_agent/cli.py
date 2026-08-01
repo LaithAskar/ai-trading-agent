@@ -309,6 +309,98 @@ def paper_status() -> None:
         console.print(otable)
 
 
+@app.command(name="public-accounts")
+def public_accounts() -> None:
+    """List Public account IDs using only a locally configured API secret."""
+    from public_api_sdk import ApiKeyAuthConfig, PublicApiClient, PublicApiClientConfiguration
+
+    cfg = Config.load()
+    if not cfg.public_api_secret_key:
+        console.print("[red]PUBLIC_API_SECRET_KEY not set in .env[/red]")
+        raise typer.Exit(1)
+
+    client = PublicApiClient(
+        ApiKeyAuthConfig(api_secret_key=cfg.public_api_secret_key, validity_minutes=15),
+        config=PublicApiClientConfiguration(),
+    )
+    try:
+        response = client.get_accounts()
+    finally:
+        client.close()
+
+    table = Table(title="Public accounts — READ ONLY")
+    table.add_column("Account ID")
+    table.add_column("Type")
+    table.add_column("Permissions")
+    for account in response.accounts:
+        table.add_row(
+            account.account_id,
+            str(getattr(account.account_type, "value", account.account_type)),
+            str(getattr(account.trade_permissions, "value", account.trade_permissions)),
+        )
+    console.print(table)
+
+
+@app.command(name="public-status")
+def public_status() -> None:
+    """Read Public account state without exposing any order-submission path."""
+    from .broker.public import PublicBroker
+
+    cfg = Config.load()
+    if not cfg.public_api_secret_key or not cfg.public_account_number:
+        console.print(
+            "[red]PUBLIC_API_SECRET_KEY / PUBLIC_ACCOUNT_NUMBER not set in .env[/red]"
+        )
+        console.print("Create an API secret in Public settings, then enter both values locally.")
+        raise typer.Exit(1)
+
+    broker = PublicBroker(
+        cfg.public_api_secret_key,
+        cfg.public_account_number,
+    )
+    try:
+        portfolio = broker.portfolio()
+        acct = broker.account(portfolio)
+        positions = broker.positions(portfolio)
+        open_orders = broker.open_orders(portfolio)
+    finally:
+        broker.close()
+
+    table = Table(title="Public account — READ ONLY")
+    table.add_column("Field")
+    table.add_column("Value", justify="right")
+    table.add_row("Cash", f"${acct.cash:,.2f}")
+    table.add_row("Portfolio value", f"${acct.portfolio_value:,.2f}")
+    table.add_row("Cash-only buying power", f"${acct.buying_power:,.2f}")
+    table.add_row("Daily P/L", f"${acct.daily_pnl:,.2f}" if acct.daily_pnl is not None else "unavailable")
+    table.add_row("Order submission", "DISABLED")
+    console.print(table)
+
+    if positions:
+        ptable = Table(title="Public positions")
+        ptable.add_column("Symbol")
+        ptable.add_column("Qty", justify="right")
+        ptable.add_column("Market value", justify="right")
+        ptable.add_column("Unrealized P/L", justify="right")
+
+        def display(value: float | None) -> str:
+            return "unavailable" if value is None else f"${value:,.2f}"
+
+        for position in positions:
+            ptable.add_row(
+                position.symbol,
+                "unavailable" if position.quantity is None else f"{position.quantity:g}",
+                display(position.market_value),
+                display(position.unrealized_pl),
+            )
+        console.print(ptable)
+    else:
+        console.print("[dim]No Public positions[/dim]")
+
+    if open_orders:
+        console.print(f"[yellow]{len(open_orders)} open Public order(s) observed; no changes made.[/yellow]")
+
+
 @app.command(name="paper-trade")
 def paper_trade(
     strategy: str = typer.Option(..., help="Strategy module name"),

@@ -134,6 +134,7 @@ class ExecutionClaim:
     acquired: bool
     status: str
     broker_order_id: str | None = None
+    run_id: str | None = None
 
 
 class ExperimentGraph:
@@ -248,7 +249,11 @@ class ExperimentGraph:
         order_id: str | None = None,
         client_order_id: str | None = None,
     ) -> str:
-        intent_id = f"intent_{uuid.uuid4().hex[:12]}"
+        intent_id = (
+            f"intent_{uuid.uuid5(uuid.NAMESPACE_URL, 'trade-intent:' + run_id + ':' + client_order_id).hex[:24]}"
+            if client_order_id
+            else f"intent_{uuid.uuid4().hex[:12]}"
+        )
         estimated_notional = order.quantity * reference_price if reference_price is not None else None
         raw = {
             "order": {"symbol": order.symbol, "side": order.side.value, "quantity": order.quantity},
@@ -264,6 +269,12 @@ class ExperimentGraph:
                  side, quantity, reference_price, estimated_notional, gate_allowed,
                  gate_reason, status, order_id, client_order_id, raw_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(intent_id) DO UPDATE SET
+                    gate_allowed = excluded.gate_allowed,
+                    gate_reason = excluded.gate_reason,
+                    status = excluded.status,
+                    order_id = excluded.order_id,
+                    raw_json = excluded.raw_json
                 """,
                 (
                     intent_id,
@@ -336,7 +347,7 @@ class ExperimentGraph:
                 (client_order_id, experiment_name, run_id, now, now),
             ).rowcount
             row = c.execute(
-                "SELECT status, broker_order_id FROM order_executions WHERE client_order_id = ?",
+                "SELECT status, broker_order_id, run_id FROM order_executions WHERE client_order_id = ?",
                 (client_order_id,),
             ).fetchone()
             c.commit()
@@ -347,7 +358,12 @@ class ExperimentGraph:
             c.close()
         if row is None:
             raise RuntimeError("execution claim disappeared after insert")
-        return ExecutionClaim(bool(inserted), str(row["status"]), row["broker_order_id"])
+        return ExecutionClaim(
+            bool(inserted),
+            str(row["status"]),
+            row["broker_order_id"],
+            str(row["run_id"]),
+        )
 
     def record_execution_success(
         self,
@@ -357,8 +373,24 @@ class ExperimentGraph:
         run_id: str,
         broker_order_id: str,
         response: dict[str, Any],
+        intent_status: str = "submitted",
+        origin_run_id: str | None = None,
     ) -> None:
+        """Atomically persist broker success plus origin and retry audit events."""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        origin_run_id = origin_run_id or run_id
         with _conn(self.db_path) as c:
+            intent = c.execute(
+                """
+                SELECT raw_json FROM trade_intents
+                WHERE run_id = ? AND client_order_id = ?
+                """,
+                (origin_run_id, client_order_id),
+            ).fetchone()
+            if intent is None:
+                raise RuntimeError("execution success has no durable trade intent")
+            raw = json.loads(intent["raw_json"])
+            raw["order_id"] = broker_order_id
             c.execute(
                 """
                 INSERT INTO order_executions
@@ -374,13 +406,56 @@ class ExperimentGraph:
                 (
                     client_order_id,
                     experiment_name,
-                    run_id,
-                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    origin_run_id,
+                    now,
                     broker_order_id,
                     json.dumps(response, sort_keys=True, default=str),
-                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    now,
                 ),
             )
+            updated = c.execute(
+                """
+                UPDATE trade_intents
+                SET status = 'submitted', order_id = ?, raw_json = ?
+                WHERE run_id = ? AND client_order_id = ?
+                """,
+                (
+                    broker_order_id,
+                    json.dumps(raw, sort_keys=True, default=str),
+                    origin_run_id,
+                    client_order_id,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("durable trade intent changed during success checkpoint")
+            if run_id != origin_run_id:
+                retry_intent = c.execute(
+                    """
+                    SELECT raw_json FROM trade_intents
+                    WHERE run_id = ? AND client_order_id = ?
+                    """,
+                    (run_id, client_order_id),
+                ).fetchone()
+                if retry_intent is None:
+                    raise RuntimeError("reconciliation has no durable retry trade intent")
+                retry_raw = json.loads(retry_intent["raw_json"])
+                retry_raw["order_id"] = broker_order_id
+                retry_updated = c.execute(
+                    """
+                    UPDATE trade_intents
+                    SET status = ?, order_id = ?, raw_json = ?
+                    WHERE run_id = ? AND client_order_id = ?
+                    """,
+                    (
+                        intent_status,
+                        broker_order_id,
+                        json.dumps(retry_raw, sort_keys=True, default=str),
+                        run_id,
+                        client_order_id,
+                    ),
+                ).rowcount
+                if retry_updated != 1:
+                    raise RuntimeError("retry trade intent changed during reconciliation")
 
     def trade_intents(self, run_id: str) -> list[dict[str, Any]]:
         with _conn(self.db_path) as c:

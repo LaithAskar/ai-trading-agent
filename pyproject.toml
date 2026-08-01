@@ -15,6 +15,7 @@ dependencies = [
     "mcp>=1.0.0,<2",
     "edgartools>=5.0.0",
     "alpaca-py>=0.43.0",
+    "publicdotcom-py==0.1.19",
     "streamlit>=1.30.0",
 ]
 

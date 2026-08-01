@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -89,6 +90,16 @@ def _score(run: BacktestRun) -> tuple[float, str]:
     benchmark = run.benchmark
     benchmark_sharpe = benchmark.sharpe if benchmark else 0.0
     benchmark_cagr = benchmark.cagr_pct if benchmark else 0.0
+    evidence = (
+        sharpe,
+        cagr,
+        max_dd,
+        benchmark_sharpe,
+        benchmark_cagr,
+        run.sharpe_p_value,
+    )
+    if not all(math.isfinite(value) for value in evidence):
+        return -1_000_000_000.0, "reject_invalid_metrics"
     score = (sharpe - benchmark_sharpe) + (cagr - benchmark_cagr) / 25.0 - max_dd / 100.0
 
     if run.metrics.num_fills == 0:
