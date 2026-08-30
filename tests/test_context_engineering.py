@@ -297,3 +297,163 @@ def test_opencode_pricing_rows():
     assert est.total_dollars == pytest.approx(0.08092, rel=1e-6)
     # Unknown opencode slugs still fall back (documented mispricing).
     assert estimate_cost("totally-unknown-gw-model", 1_000_000, 0).total_dollars == pytest.approx(3.0, rel=1e-9)
+
+
+# ---------- OpenAI-format shim (opencode-openai / ollama) ----------
+
+
+class _FakeHttpxResponse:
+    def __init__(self, data):
+        self._data = data
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._data
+
+
+def test_shim_converts_anthropic_request_to_openai_wire(monkeypatch):
+    from trading_agent.llm.openai_shim import OpenAICompatClient
+
+    captured: dict = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["payload"] = json
+        return _FakeHttpxResponse(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "content": "I will check.",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "t1", "arguments": '{"a": 2}'},
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 500,
+                    "completion_tokens": 20,
+                    "prompt_tokens_details": {"cached_tokens": 123},
+                },
+            }
+        )
+
+    monkeypatch.setattr("trading_agent.llm.openai_shim.httpx.post", fake_post)
+    client = OpenAICompatClient(base_url="http://127.0.0.1:11434", api_key="x")
+
+    resp = client.messages_create(
+        model="grok-4.5",
+        max_tokens=100,
+        system=[{"type": "text", "text": "SYS", "cache_control": {"type": "ephemeral"}}],
+        tools=[{"name": "t1", "description": "d", "input_schema": {"type": "object", "properties": {}}}],
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "go"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "thinking"},
+                    {"type": "tool_use", "id": "t1", "name": "t1", "input": {"a": 1}},
+                ],
+            },
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "result-json"}]},
+        ],
+    )
+
+    wire = captured["payload"]
+    assert captured["url"].endswith("/v1/chat/completions")
+    assert wire["model"] == "grok-4.5"
+    assert wire["messages"][0]["role"] == "system"  # system block list -> system message
+    assert wire["tools"][0]["type"] == "function"  # anthropic schema -> function schema
+    assert wire["tools"][0]["function"]["name"] == "t1"
+    roles = [m["role"] for m in wire["messages"][1:]]
+    assert roles == ["user", "assistant", "tool"]  # tool_result became role:"tool"
+    assert wire["messages"][3]["tool_call_id"] == "t1"
+    assert wire["messages"][2]["tool_calls"][0]["function"]["arguments"] == '{"a": 1}'
+
+    # response conversion: OpenAI shapes -> Anthropic-shaped objects
+    assert resp.stop_reason == "tool_use"
+    assert resp.content[0].text == "I will check."
+    assert resp.content[1].type == "tool_use"
+    assert resp.content[1].name == "t1"
+    assert resp.content[1].input == {"a": 2}
+    assert resp.usage.input_tokens == 500
+    assert resp.usage.output_tokens == 20
+    assert resp.usage.cache_read_input_tokens == 123
+
+
+def test_shim_roundtrips_own_response_blocks(monkeypatch):
+    """The loop appends response.content (shim attribute objects) verbatim;
+    the converter must accept those, not just plain dicts — this is exactly
+    how iteration 2+ requests are built."""
+    from trading_agent.llm.openai_shim import OpenAICompatClient, _ToolUseBlock, _TextBlock
+
+    captured: dict = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["payload"] = json
+        return _FakeHttpxResponse(
+            {
+                "choices": [{"finish_reason": "stop", "message": {"content": "done"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        )
+
+    monkeypatch.setattr("trading_agent.llm.openai_shim.httpx.post", fake_post)
+    client = OpenAICompatClient(base_url="http://127.0.0.1:11434", api_key="x")
+
+    client.messages_create(
+        model="minimax-m3",
+        max_tokens=16,
+        system="s",
+        tools=[{"name": "t1", "description": "d", "input_schema": {"type": "object", "properties": {}}}],
+        messages=[
+            {"role": "user", "content": "go"},
+            # attribute-style blocks exactly as the loop appends them
+            {"role": "assistant", "content": [_TextBlock("checking"), _ToolUseBlock("call_9", "t1", '{"a": 1}')]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_9", "content": "[]"}]},
+        ],
+    )
+
+    wire_msgs = captured["payload"]["messages"]
+    assistant = next(m for m in wire_msgs if m["role"] == "assistant")
+    assert assistant["tool_calls"][0]["id"] == "call_9"
+    assert assistant["tool_calls"][0]["function"]["name"] == "t1"
+    assert assistant["tool_calls"][0]["function"]["arguments"] == '{"a": 1}'
+    tool_msg = next(m for m in wire_msgs if m["role"] == "tool")
+    assert tool_msg["tool_call_id"] == "call_9"
+
+
+def test_shim_end_turn_and_string_system(monkeypatch):
+    from trading_agent.llm.openai_shim import OpenAICompatClient
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        # system passed as string must arrive as a plain system message
+        assert json["messages"][0] == {"role": "system", "content": "PLAIN"}
+        return _FakeHttpxResponse(
+            {
+                "choices": [{"finish_reason": "stop", "message": {"content": "All done."}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        )
+
+    monkeypatch.setattr("trading_agent.llm.openai_shim.httpx.post", fake_post)
+    client = OpenAICompatClient(base_url="http://127.0.0.1:11434/v1", api_key="x")
+    resp = client.messages_create(
+        model="gpt-5.6-luna",
+        max_tokens=50,
+        system="PLAIN",
+        tools=[],
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    assert resp.stop_reason == "end_turn"
+    assert resp.content[0].text == "All done."
+    assert resp.usage.cache_read_input_tokens == 0
+    assert resp.usage.cache_creation_input_tokens == 0

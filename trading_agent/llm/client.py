@@ -85,12 +85,16 @@ def provider_credentials(cfg, provider: str):
 
     Single mapping of provider -> Config field, so the CLI never needs to
     know field names. Returns None when that provider isn't configured.
+    Local providers (ollama) need no credential and return "".
     """
     fields = {
         "opencode": "opencode_api_key",
+        "opencode-openai": "opencode_api_key",
         "openrouter": "openrouter_api_key",
         "anthropic": "anthropic_api_key",
     }
+    if provider == "ollama":
+        return ""
     field = fields.get(provider)
     return getattr(cfg, field, None) if field else None
 

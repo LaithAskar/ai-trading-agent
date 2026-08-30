@@ -45,6 +45,13 @@ OPENCODE_PRICING_PER_MTOK: dict[str, dict[str, float]] = {
     "deepseek-v4-flash":  {"input": 0.08092, "output": 0.16184, "cache_read": 0.016184, "cache_write": 0.0},
     "minimax-m3":         {"input": 0.30, "output": 1.20, "cache_read": 0.06, "cache_write": 0.0},
     "qwen3.8-flash":      {"input": 0.15, "output": 0.47, "cache_read": 0.02, "cache_write": 0.20},
+    "grok-4.5":           {"input": 2.00, "output": 6.00, "cache_read": 0.30, "cache_write": 0.0},
+    "grok-4.6":           {"input": 2.00, "output": 6.00, "cache_read": 0.50, "cache_write": 0.0},
+}
+
+# Local hardware (Ollama etc.): inference costs electricity, not tokens.
+FREE_LOCAL_PRICING_PER_MTOK: dict[str, dict[str, float]] = {
+    "qwen3:8b": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0},
 }
 
 
@@ -73,6 +80,7 @@ def estimate_cost(
         PRICING_PER_MTOK.get(model)
         or OPENROUTER_PRICING_PER_MTOK.get(model)
         or OPENCODE_PRICING_PER_MTOK.get(model)
+        or FREE_LOCAL_PRICING_PER_MTOK.get(model)
         or _FALLBACK
     )
     in_dollars = input_tokens * pricing["input"] / 1_000_000

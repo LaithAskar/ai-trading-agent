@@ -979,7 +979,7 @@ def agent(
     max_tokens: int = typer.Option(0, help="Override AGENT_MAX_SESSION_TOKENS (0 = use config)"),
     model: str = typer.Option("", help="Override AGENT_MODEL (e.g. kimi-k3, glm-5.3, deepseek-v4-flash, openai/gpt-5.6-sol)"),
     provider: str | None = typer.Option(
-        None, help="anthropic | openrouter | opencode. Default: auto (opencode gateway if it is configured, else anthropic)."
+        None, help="anthropic | openrouter | opencode | opencode-openai | ollama. Default: auto (opencode gateway if configured, else anthropic)."
     ),
     mcp_server: list[str] = typer.Option(  # noqa: B008
         [], "--mcp-server", help="URL of a remote MCP server whose tools the agent should also use (repeatable). Auth via `mcp-connect` first."
@@ -1005,9 +1005,10 @@ def agent(
     if provider is None:
         provider = "opencode" if provider_credentials(cfg, "opencode") else "anthropic"
     cred = provider_credentials(cfg, provider)
-    if provider not in ("opencode", "openrouter", "anthropic"):
+    if provider not in ("opencode", "opencode-openai", "openrouter", "anthropic", "ollama"):
         raise typer.BadParameter(f"unknown provider {provider!r}")
-    if not cred:
+    # None = provider unknown/unconfigured; "" = credentialless (local ollama).
+    if cred is None:
         console.print(
             f"[red]Provider {provider!r} has no credential configured.[/red] "
             "See the providers table in the README."

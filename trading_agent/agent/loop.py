@@ -15,7 +15,7 @@ from rich.prompt import Confirm
 from rich.syntax import Syntax
 
 from ..config import AGENT_LOGS_DIR, MEMORY_DB
-from ..llm.client import client_kwargs, resolve_model
+from ..llm.client import OPENCODE_BASE_URL, client_kwargs, resolve_model
 from .memory import Memory
 from .pricing import estimate_cost
 from .prompts import SYSTEM_PROMPT
@@ -28,8 +28,27 @@ _ANTHROPIC_CACHE_CONTROL = {"type": "ephemeral", "ttl": "5m"}
 _OPENROUTER_CACHE_CONTROL = {"type": "ephemeral"}
 
 
+def build_client(api_key: str | None, provider: str) -> Any:
+    """Construct the right client for a provider.
+
+    anthropic / openrouter / opencode speak the Anthropic Messages wire and
+    use the anthropic SDK (referenced through this module's namespace so the
+    test patch-point keeps working). opencode-openai and ollama speak the
+    OpenAI chat/completions wire and go through the duck-typed shim, which
+    converts to/from the Anthropic-shaped objects the loop expects.
+    """
+    if provider in ("opencode-openai", "ollama"):
+        from ..llm.openai_shim import OpenAICompatClient
+
+        base = OPENCODE_BASE_URL if provider == "opencode-openai" else "http://127.0.0.1:11434"
+        if not api_key:
+            api_key = "ollama"  # local server needs a non-empty bearer
+        return OpenAICompatClient(base_url=base, api_key=api_key)
+    return anthropic.Anthropic(**client_kwargs(api_key, provider))
+
+
 def _cache_control(provider: str) -> Any:
-    if provider in ("openrouter", "opencode"):
+    if provider in ("openrouter", "opencode", "opencode-openai", "ollama"):
         return _OPENROUTER_CACHE_CONTROL
     return _ANTHROPIC_CACHE_CONTROL
 
@@ -253,7 +272,7 @@ def run_agent(
         for t in sorted(registry.values(), key=lambda t: t.name)
     ]
 
-    client = anthropic.Anthropic(**client_kwargs(api_key, provider))
+    client = build_client(api_key, provider)
     api_model = resolve_model(model, provider)
 
     console.rule(f"[bold]Agent session {session.session_id}[/bold]  ({mode}, {model})")
