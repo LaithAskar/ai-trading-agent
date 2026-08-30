@@ -21,6 +21,11 @@ from .pricing import estimate_cost
 from .prompts import SYSTEM_PROMPT
 from .tools import build_tool_registry
 
+# Ch2 context engineering: rolling prompt-cache breakpoint. Marked onto the
+# newest message before every API call; 5-minute TTL (the default provider
+# TTL, made explicit so cache behavior is deterministic and self-documenting).
+_ROLLING_CACHE_CONTROL = {"type": "ephemeral", "ttl": "5m"}
+
 
 def _reconfigure_utf8(stream) -> bool:
     """Switch a text stream to UTF-8 with errors='replace'. Returns True if applied.
@@ -77,6 +82,8 @@ class AgentSession:
     transcript: list[TranscriptEntry] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     cost_dollars: float = 0.0
     finished: bool = False
     final_summary: str | None = None
@@ -91,6 +98,8 @@ class AgentSession:
             "started_at": self.started_at,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
             "cost_dollars": round(self.cost_dollars, 6),
             "finished": self.finished,
             "stopped_by": self.stopped_by,
@@ -161,6 +170,36 @@ def _render_cap_hit(reason: str) -> None:
     )
 
 
+def _shift_rolling_breakpoint(messages: list[dict]) -> None:
+    """Move the rolling prompt-cache breakpoint to the newest message (Ch2).
+
+    Strips cache_control from all older blocks (restoring a pristine
+    transcript) and marks the final message. One rolling breakpoint + the
+    static system-prompt breakpoint stays within Anthropic's limit of 4
+    cache breakpoints per request. The growing prefix (system + tools +
+    prior messages) is then cache-eligible, and only the newest suffix
+    recomputes at full input price.
+    """
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    block.pop("cache_control", None)
+    last = messages[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        last["content"] = [
+            {
+                "type": "text",
+                "text": content,
+                "cache_control": _ROLLING_CACHE_CONTROL,
+            }
+        ]
+    elif isinstance(content, list) and content:
+        content[-1]["cache_control"] = _ROLLING_CACHE_CONTROL
+
+
 def run_agent(
     *,
     goal: str,
@@ -198,7 +237,14 @@ def run_agent(
         if t.name in registry:
             console.print(f"[yellow]Tool name collision on {t.name!r}; remote version wins.[/yellow]")
         registry[t.name] = t
-    tool_schemas = [t.anthropic_schema() for t in registry.values()]
+    # Ch2: fixed tool order, sorted once at session start. The tools array
+    # rides in the cached prefix right after the system prompt; any request-
+    # to-request reordering would invalidate the prompt cache from the first
+    # moved tool onward (book's "dynamic sorting of tool definitions" trap).
+    tool_schemas = [
+        t.anthropic_schema()
+        for t in sorted(registry.values(), key=lambda t: t.name)
+    ]
 
     client = anthropic.Anthropic(**client_kwargs(api_key, provider))
     api_model = resolve_model(model, provider)
@@ -210,11 +256,16 @@ def run_agent(
         f"${max_session_dollars:.2f}[/dim]"
     )
 
-    messages: list[dict] = [{"role": "user", "content": goal}]
+    # Ch2: convert the goal to a block list so the rolling cache breakpoint
+    # has somewhere to live on the first request.
+    messages: list[dict] = [{"role": "user", "content": [{"type": "text", "text": goal}]}]
     cap_hit_reason: str | None = None
 
     for iteration in range(1, max_iters + 1):
         console.rule(f"[dim]iteration {iteration}/{max_iters}[/dim]")
+
+        # Ch2: keep exactly one rolling breakpoint, on the newest message.
+        _shift_rolling_breakpoint(messages)
 
         try:
             response = client.messages.create(
@@ -224,7 +275,7 @@ def run_agent(
                     {
                         "type": "text",
                         "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
+                        "cache_control": {"type": "ephemeral", "ttl": "5m"},
                     }
                 ],
                 tools=tool_schemas,
@@ -235,9 +286,23 @@ def run_agent(
             cap_hit_reason = f"API error: {e}"
             break
 
-        session.input_tokens += response.usage.input_tokens
-        session.output_tokens += response.usage.output_tokens
-        cost = estimate_cost(model, session.input_tokens, session.output_tokens)
+        usage = response.usage
+        session.input_tokens += usage.input_tokens
+        session.output_tokens += usage.output_tokens
+        # Ch2: cache-aware accounting. Cache reads bill at ~0.1x input and
+        # 5-minute cache writes at ~1.25x; counting them as fresh input
+        # would make the session dollar cap diverge from the real invoice.
+        session.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
+        session.cache_write_tokens += (
+            getattr(usage, "cache_creation_input_tokens", 0) or 0
+        )
+        cost = estimate_cost(
+            model,
+            session.input_tokens,
+            session.output_tokens,
+            cache_read_tokens=session.cache_read_tokens,
+            cache_write_tokens=session.cache_write_tokens,
+        )
         session.cost_dollars = cost.total_dollars
 
         thought_parts: list[str] = []
