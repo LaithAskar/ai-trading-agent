@@ -14,6 +14,7 @@ patch points (``patch("trading_agent.agent.loop.anthropic.Anthropic")``) working
 """
 from __future__ import annotations
 
+import os
 from urllib.parse import urlencode
 
 import httpx
@@ -24,6 +25,14 @@ import httpx
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 OPENROUTER_AUTH_URL = "https://openrouter.ai/auth"
 OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/auth/keys"
+
+# OpenCode "go" gateway (Nous-ecosystem aggregator): speaks BOTH OpenAI
+# chat-completions and the Anthropic Messages wire format, with ~30 models
+# behind one key (kimi-k3, glm-5.x, deepseek-v4, qwen3.8, gpt-5.6-luna...).
+# The Anthropic SDK appends /v1/messages to this root, so the root must NOT
+# end in /v1 (double /v1 -> 404); strip any such suffix from the env override.
+_RAW_OPENCODE_BASE = os.getenv("OPENCODE_GO_BASE_URL", "https://opencode.ai/zen/go/v1")
+OPENCODE_BASE_URL = _RAW_OPENCODE_BASE.rstrip("/").removesuffix("/v1")
 
 # Canonical Anthropic model id -> OpenRouter slug. OpenRouter uses dotted
 # versions ("anthropic/claude-sonnet-4.6"); we use hyphenated ("claude-sonnet-4-6").
@@ -38,7 +47,13 @@ OPENROUTER_MODEL_MAP: dict[str, str] = {
 def resolve_model(model: str, provider: str = "anthropic") -> str:
     """Translate a canonical model id to the slug the provider expects."""
     if provider == "openrouter":
+        if "/" in model:
+            # Vendor-qualified slug (e.g. "openai/gpt-5.6-sol",
+            # "qwen/qwen3.8-flash") passes through unchanged. Only bare
+            # Anthropic ids get the anthropic/ namespace applied.
+            return model
         return OPENROUTER_MODEL_MAP.get(model, f"anthropic/{model}")
+    # opencode (and any future passthrough provider): bare slugs verbatim.
     return model
 
 
@@ -54,7 +69,30 @@ def client_kwargs(api_key: str | None, provider: str = "anthropic") -> dict:
             "base_url": OPENROUTER_BASE_URL,
             "default_headers": {"Authorization": f"Bearer {api_key}"},
         }
+    if provider == "opencode":
+        if not api_key:
+            raise ValueError("opencode provider requires OPENCODE_GO_API_KEY")
+        return {
+            "api_key": api_key,
+            "base_url": OPENCODE_BASE_URL,
+            "default_headers": {"Authorization": f"Bearer {api_key}"},
+        }
     return {"api_key": api_key} if api_key else {}
+
+
+def provider_credentials(cfg, provider: str):
+    """Return the credential for a provider from a Config-like object.
+
+    Single mapping of provider -> Config field, so the CLI never needs to
+    know field names. Returns None when that provider isn't configured.
+    """
+    fields = {
+        "opencode": "opencode_api_key",
+        "openrouter": "openrouter_api_key",
+        "anthropic": "anthropic_api_key",
+    }
+    field = fields.get(provider)
+    return getattr(cfg, field, None) if field else None
 
 
 def build_auth_url(callback_url: str) -> str:

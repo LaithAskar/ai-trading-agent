@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+HERMES_ENV = Path.home() / ".hermes" / ".env"
 DATA_DIR = PROJECT_ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 RESULTS_DIR = DATA_DIR / "results"
@@ -35,10 +36,16 @@ class Config:
     alphavantage_api_key: str | None
     openrouter_api_key: str | None
     openrouter_callback_url: str
+    opencode_api_key: str | None
+    x_bearer_token: str | None = field(default=None, repr=False)
 
     @classmethod
     def load(cls) -> "Config":
         load_dotenv(PROJECT_ROOT / ".env")
+        # Hermes's own env file may carry shared provider keys (e.g. the
+        # opencode-go key). Never override values already set by the project
+        # .env or the shell.
+        load_dotenv(HERMES_ENV, override=False)
         return cls(
             live_trading=os.getenv("LIVE_TRADING", "false").lower() == "true",
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -56,9 +63,11 @@ class Config:
             public_account_number=os.getenv("PUBLIC_ACCOUNT_NUMBER") or None,
             alphavantage_api_key=os.getenv("ALPHAVANTAGE_API_KEY") or None,
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
+            opencode_api_key=os.getenv("OPENCODE_GO_API_KEY") or None,
             openrouter_callback_url=os.getenv(
                 "OPENROUTER_CALLBACK_URL", "https://ai-trading-agent-laith.streamlit.app/"
             ),
+            x_bearer_token=os.getenv("X_BEARER_TOKEN") or None,
         )
 
 

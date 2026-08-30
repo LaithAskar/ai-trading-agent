@@ -21,6 +21,44 @@ app.add_typer(experiment_app, name="experiment")
 console = Console()
 
 
+@app.command(name="social-monitor")
+def social_monitor(
+    limit: int = typer.Option(20, min=1, max=40, help="Maximum recent posts per source."),
+) -> None:
+    """Audit Donald Trump Truth Social/X posts as context-only event signals."""
+    from .data.social_signals import (
+        SocialSource,
+        TruthSocialSource,
+        XSource,
+        monitor_trump_social_signals,
+    )
+
+    cfg = Config.load()
+    ensure_dirs()
+    sources: list[SocialSource] = [TruthSocialSource()]
+    if cfg.x_bearer_token:
+        sources.append(XSource(cfg.x_bearer_token))
+    result = monitor_trump_social_signals(sources=sources, limit_per_source=limit)
+    status = dict(result.source_status)
+    if not cfg.x_bearer_token:
+        status["x"] = "not_configured:X_BEARER_TOKEN"
+
+    table = Table(title="Trump social event-signal monitor")
+    table.add_column("Source")
+    table.add_column("Status")
+    for source, source_status in sorted(status.items()):
+        table.add_row(source, source_status)
+    console.print(table)
+    console.print(
+        f"accepted={len(result.accepted)} rejected={len(result.rejected)} "
+        f"duplicates={result.duplicate_count} execution_instructions=0"
+    )
+    for event in result.accepted:
+        console.print(f"[green]context signal[/green] {event.published_at} {event.canonical_url}")
+    if any(value.startswith(("error:", "not_configured:")) for value in status.values()):
+        raise typer.Exit(2)
+
+
 def _parse_params(items: list[str]) -> dict:
     out: dict = {}
     for item in items:
@@ -43,6 +81,7 @@ def experiment_create(
     capital: float = typer.Option(200.0, help="Capital cap in USD."),
     duration_days: int = typer.Option(30, help="Experiment duration."),
     mode: str = typer.Option("paper", help="research, paper, or live."),
+    broker: str = typer.Option("alpaca", help="Execution broker: alpaca or public."),
     max_trade: float = typer.Option(20.0, help="Max notional per order."),
     max_position: float = typer.Option(40.0, help="Max notional exposure per symbol."),
     daily_loss_stop: float = typer.Option(4.0, help="Daily loss stop in USD."),
@@ -67,6 +106,7 @@ def experiment_create(
         capital_cap_usd=capital,
         duration_days=duration_days,
         mode=mode,  # type: ignore[arg-type]
+        broker=broker,
         max_trade_usd=max_trade,
         max_position_usd=max_position,
         daily_loss_stop_usd=daily_loss_stop,
@@ -117,13 +157,15 @@ def experiment_run(
     symbol: list[str] = typer.Option([], "--symbol", help="Ticker to evaluate; repeatable."),  # noqa: B008
     strategy: list[str] = typer.Option([], "--strategy", help="Strategy module to evaluate; repeatable."),  # noqa: B008
     lookback_days: int = typer.Option(730, help="Backtest/paper replay lookback window."),
-    execute: bool = typer.Option(False, help="Submit to Alpaca paper after contract gate. Default is dry-run."),
+    execute: bool = typer.Option(
+        False, help="Submit through the contract-authorized broker. Default is dry-run."
+    ),
 ) -> None:
     """Run one autonomous daily research/trade-intent cycle.
 
     This is autonomous at the trade-intent level: no per-trade prompt. In the
     default dry-run mode it records proposed intents only. With --execute it
-    submits to Alpaca paper, still behind the experiment contract gate.
+    submits only when the broker/account and all contract/global gates agree.
     """
     from .autonomous import run_autonomous_daily
     from .broker.alpaca import AlpacaPaperBroker
@@ -133,14 +175,41 @@ def experiment_run(
     ensure_dirs()
     contract = ExperimentContract.load(name)
     broker = None
+    graph = None
     if execute:
-        if contract.mode != "paper":
-            console.print("[red]v0 --execute only supports paper contracts.[/red]")
+        normalized_broker = contract.broker.strip().lower()
+        if normalized_broker == "alpaca":
+            if contract.mode != "paper":
+                console.print("[red]Alpaca execution requires a paper contract.[/red]")
+                raise typer.Exit(1)
+            if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
+                console.print("[red]ALPACA_API_KEY / ALPACA_API_SECRET required for --execute.[/red]")
+                raise typer.Exit(1)
+            broker = AlpacaPaperBroker(cfg.alpaca_api_key, cfg.alpaca_api_secret)
+        elif normalized_broker == "public":
+            if contract.mode != "live" or contract.live_enabled is not True:
+                console.print("[red]Public execution requires mode=live and live_enabled=True.[/red]")
+                raise typer.Exit(1)
+            if cfg.live_trading is not True:
+                console.print("[red]Public execution requires global LIVE_TRADING=True.[/red]")
+                raise typer.Exit(1)
+            if not cfg.public_api_secret_key or not cfg.public_account_number:
+                console.print("[red]PUBLIC_API_SECRET_KEY / PUBLIC_ACCOUNT_NUMBER required.[/red]")
+                raise typer.Exit(1)
+            from .broker.public_live import PublicLiveBroker
+            from .experiment_graph import ExperimentGraph
+
+            graph = ExperimentGraph()
+            broker = PublicLiveBroker(
+                cfg.public_api_secret_key,
+                cfg.public_account_number,
+                contract=contract,
+                graph=graph,
+                live_trading_enabled=cfg.live_trading,
+            )
+        else:
+            console.print(f"[red]Unsupported execution broker: {contract.broker}[/red]")
             raise typer.Exit(1)
-        if not cfg.alpaca_api_key or not cfg.alpaca_api_secret:
-            console.print("[red]ALPACA_API_KEY / ALPACA_API_SECRET required for --execute.[/red]")
-            raise typer.Exit(1)
-        broker = AlpacaPaperBroker(cfg.alpaca_api_key, cfg.alpaca_api_secret)
 
     result = run_autonomous_daily(
         contract=contract,
@@ -149,6 +218,8 @@ def experiment_run(
         lookback_days=lookback_days,
         execute=execute,
         broker=broker,
+        graph=graph,
+        live_trading=cfg.live_trading,
     )
 
     console.print(f"[green]Recorded experiment run[/green] {result.run_id} status={result.status}")
@@ -906,25 +977,45 @@ def agent(
     max_iters: int = typer.Option(0, help="Override AGENT_MAX_ITERS (0 = use config)"),
     max_dollars: float = typer.Option(0.0, help="Override AGENT_MAX_SESSION_DOLLARS (0 = use config)"),
     max_tokens: int = typer.Option(0, help="Override AGENT_MAX_SESSION_TOKENS (0 = use config)"),
-    model: str = typer.Option("", help="Override AGENT_MODEL"),
+    model: str = typer.Option("", help="Override AGENT_MODEL (e.g. kimi-k3, glm-5.3, deepseek-v4-flash, openai/gpt-5.6-sol)"),
+    provider: str | None = typer.Option(
+        None, help="anthropic | openrouter | opencode. Default: auto (opencode gateway if it is configured, else anthropic)."
+    ),
     mcp_server: list[str] = typer.Option(  # noqa: B008
         [], "--mcp-server", help="URL of a remote MCP server whose tools the agent should also use (repeatable). Auth via `mcp-connect` first."
     ),
 ) -> None:
-    """Run the AI agent on a natural-language goal."""
+    """Run the AI agent on a natural-language goal.
+
+    Models come from whichever provider is configured: the opencode gateway
+    (bare slugs: kimi-k3, glm-5.3, deepseek-v4-flash, qwen3.8-max, ...),
+    OpenRouter (vendor slugs: openai/gpt-5.6-sol, ...), or Anthropic direct.
+    """
     from .agent.loop import run_agent
+    from .llm.client import provider_credentials, resolve_model
 
     cfg = Config.load()
     ensure_dirs()
 
-    if not cfg.anthropic_api_key:
-        console.print(
-            "[red]ANTHROPIC_API_KEY not set.[/red] "
-            "Add it to .env or export it in your shell."
-        )
-        raise typer.Exit(1)
     if mode not in ("auto", "interactive"):
         raise typer.BadParameter("mode must be 'auto' or 'interactive'")
+
+    # Provider resolution: explicit flag wins; else the opencode gateway when
+    # it is configured (one credential, ~30 models); else Anthropic direct.
+    if provider is None:
+        provider = "opencode" if provider_credentials(cfg, "opencode") else "anthropic"
+    cred = provider_credentials(cfg, provider)
+    if provider not in ("opencode", "openrouter", "anthropic"):
+        raise typer.BadParameter(f"unknown provider {provider!r}")
+    if not cred:
+        console.print(
+            f"[red]Provider {provider!r} has no credential configured.[/red] "
+            "See the providers table in the README."
+        )
+        raise typer.Exit(1)
+
+    chosen_model = model or cfg.agent_model
+    console.print(f"[dim]provider: {provider}  |  model: {resolve_model(chosen_model, provider)}[/dim]")
 
     extra_tools = []
     if mcp_server:
@@ -943,12 +1034,13 @@ def agent(
     run_agent(
         goal=goal,
         mode=mode,
-        model=model or cfg.agent_model,
+        model=chosen_model,
         max_iters=max_iters or cfg.agent_max_iters,
         max_tokens_per_call=cfg.agent_max_tokens_per_call,
         max_session_tokens=max_tokens or cfg.agent_max_session_tokens,
         max_session_dollars=max_dollars or cfg.agent_max_session_dollars,
-        api_key=cfg.anthropic_api_key,
+        api_key=cred,
+        provider=provider,
         extra_tools=extra_tools,
     )
 

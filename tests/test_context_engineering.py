@@ -205,3 +205,95 @@ def test_estimate_cost_cache_multipliers():
 
     plain = estimate_cost("claude-sonnet-4-6", 1_000_000, 0)
     assert plain.total_dollars == pytest.approx(3.0, rel=1e-9)
+
+
+def test_openrouter_cache_dialect(tmp_path, monkeypatch):
+    """OpenRouter routing: plain ephemeral markers (no Anthropic ttl field)."""
+    monkeypatch.setattr("trading_agent.agent.loop.MEMORY_DB", tmp_path / "mem.sqlite3")
+    monkeypatch.setattr("trading_agent.agent.loop.AGENT_LOGS_DIR", tmp_path / "logs")
+
+    fake = FakeAnthropic(
+        [FakeResponse(content=[FakeTextBlock("Done.")], stop_reason="end_turn")]
+    )
+    # client_kwargs is stubbed because the real one (correctly) refuses an
+    # empty OpenRouter key; the client itself is faked, so no key is used.
+    with (
+        patch("trading_agent.agent.loop.anthropic.Anthropic", return_value=fake),
+        patch("trading_agent.agent.loop.client_kwargs", return_value={"api_key": "test"}),
+    ):
+        from trading_agent.agent.loop import run_agent
+
+        run_agent(
+            goal="or dialect",
+            mode="auto",
+            model="openai/gpt-5.6-sol",
+            max_iters=1,
+            provider="openrouter",
+            api_key=None,
+        )
+
+    call = fake.messages.calls[0]
+    assert call["model"] == "openai/gpt-5.6-sol"  # vendor slug passed through
+    assert call["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert call["messages"][-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_resolve_model_vendor_qualified_passthrough():
+    from trading_agent.llm.client import resolve_model
+
+    assert resolve_model("openai/gpt-5.6-sol", "openrouter") == "openai/gpt-5.6-sol"
+    assert resolve_model("qwen/qwen3.8-flash", "openrouter") == "qwen/qwen3.8-flash"
+    # Bare ids keep the legacy mapping/namespace behavior.
+    assert resolve_model("claude-sonnet-4-6", "openrouter") == "anthropic/claude-sonnet-4.6"
+    assert resolve_model("claude-future-9", "openrouter") == "anthropic/claude-future-9"
+
+
+def test_opencode_client_kwargs_and_slugs(monkeypatch):
+    from trading_agent.llm import client as orc
+
+    monkeypatch.setattr(orc, "OPENCODE_BASE_URL", "https://opencode.example/v1")
+    kw = orc.client_kwargs("oc-test", "opencode")
+    assert kw["base_url"] == "https://opencode.example/v1"
+    assert kw["default_headers"]["Authorization"] == "Bearer oc-test"
+    with pytest.raises(ValueError):
+        orc.client_kwargs(None, "opencode")
+    # Bare slugs resolve verbatim on the opencode gateway.
+    assert orc.resolve_model("kimi-k3", "opencode") == "kimi-k3"
+    assert orc.resolve_model("deepseek-v4-flash", "opencode") == "deepseek-v4-flash"
+
+
+def test_opencode_cache_dialect(tmp_path, monkeypatch):
+    """opencode routing: plain ephemeral markers, bare slug, correct model sent."""
+    monkeypatch.setattr("trading_agent.agent.loop.MEMORY_DB", tmp_path / "mem.sqlite3")
+    monkeypatch.setattr("trading_agent.agent.loop.AGENT_LOGS_DIR", tmp_path / "logs")
+
+    fake = FakeAnthropic(
+        [FakeResponse(content=[FakeTextBlock("Done.")], stop_reason="end_turn")]
+    )
+    with (
+        patch("trading_agent.agent.loop.anthropic.Anthropic", return_value=fake),
+        patch("trading_agent.agent.loop.client_kwargs", return_value={"api_key": "test"}),
+    ):
+        from trading_agent.agent.loop import run_agent
+
+        run_agent(
+            goal="opencode dialect",
+            mode="auto",
+            model="kimi-k3",
+            max_iters=1,
+            provider="opencode",
+            api_key=None,
+        )
+
+    call = fake.messages.calls[0]
+    assert call["model"] == "kimi-k3"  # bare gateway slug passed through
+    assert call["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert call["messages"][-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_opencode_pricing_rows():
+    # Gateway slugs price from the OPENCODE table, not the Sonnet fallback.
+    est = estimate_cost("deepseek-v4-flash", 1_000_000, 0)
+    assert est.total_dollars == pytest.approx(0.08092, rel=1e-6)
+    # Unknown opencode slugs still fall back (documented mispricing).
+    assert estimate_cost("totally-unknown-gw-model", 1_000_000, 0).total_dollars == pytest.approx(3.0, rel=1e-9)

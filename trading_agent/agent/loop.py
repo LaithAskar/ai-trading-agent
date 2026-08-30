@@ -22,9 +22,16 @@ from .prompts import SYSTEM_PROMPT
 from .tools import build_tool_registry
 
 # Ch2 context engineering: rolling prompt-cache breakpoint. Marked onto the
-# newest message before every API call; 5-minute TTL (the default provider
-# TTL, made explicit so cache behavior is deterministic and self-documenting).
-_ROLLING_CACHE_CONTROL = {"type": "ephemeral", "ttl": "5m"}
+# newest message before every API call. TTL is Anthropic-dialect; OpenRouter
+# normalizes plain ephemeral markers for every provider.
+_ANTHROPIC_CACHE_CONTROL = {"type": "ephemeral", "ttl": "5m"}
+_OPENROUTER_CACHE_CONTROL = {"type": "ephemeral"}
+
+
+def _cache_control(provider: str) -> Any:
+    if provider in ("openrouter", "opencode"):
+        return _OPENROUTER_CACHE_CONTROL
+    return _ANTHROPIC_CACHE_CONTROL
 
 
 def _reconfigure_utf8(stream) -> bool:
@@ -170,7 +177,7 @@ def _render_cap_hit(reason: str) -> None:
     )
 
 
-def _shift_rolling_breakpoint(messages: list[dict]) -> None:
+def _shift_rolling_breakpoint(messages: list[dict], cc: dict) -> None:
     """Move the rolling prompt-cache breakpoint to the newest message (Ch2).
 
     Strips cache_control from all older blocks (restoring a pristine
@@ -193,11 +200,11 @@ def _shift_rolling_breakpoint(messages: list[dict]) -> None:
             {
                 "type": "text",
                 "text": content,
-                "cache_control": _ROLLING_CACHE_CONTROL,
+                "cache_control": cc,
             }
         ]
     elif isinstance(content, list) and content:
-        content[-1]["cache_control"] = _ROLLING_CACHE_CONTROL
+        content[-1]["cache_control"] = cc
 
 
 def run_agent(
@@ -265,7 +272,7 @@ def run_agent(
         console.rule(f"[dim]iteration {iteration}/{max_iters}[/dim]")
 
         # Ch2: keep exactly one rolling breakpoint, on the newest message.
-        _shift_rolling_breakpoint(messages)
+        _shift_rolling_breakpoint(messages, _cache_control(provider))
 
         try:
             response = client.messages.create(
@@ -275,7 +282,7 @@ def run_agent(
                     {
                         "type": "text",
                         "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral", "ttl": "5m"},
+                        "cache_control": _cache_control(provider),
                     }
                 ],
                 tools=tool_schemas,
